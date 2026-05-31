@@ -1,0 +1,24 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+
+# Folders
+ARINC717/
+ARINC767/
+wgl/
+Docs/
+
+# Test cache
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# OS junk
+.DS_Store
