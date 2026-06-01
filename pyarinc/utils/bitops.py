@@ -17,29 +17,34 @@ def int_from_bits(bits: Iterable[int]) -> int:
 
 
 def extract_bits(data: bytes, start: int, length: int, signed: bool = False) -> int:
-    """Extract `length` bits starting at `start` (0-based MSB indexing) and return integer.
+    """Extract exactly `length` bits starting at `start` (0-based MSB indexing)."""
 
-    Args:
-        data: source bytes (MSB-first ordering)
-        start: bit index (0 is the MSB of data[0])
-        length: number of bits to extract
-        signed: interpret result as two's complement signed integer
-
-    Returns:
-        integer value (signed if requested)
-    """
     if length <= 0:
         return 0
-    bits = list(bits_from_bytes(data))
-    if start < 0 or start >= len(bits):
-        return 0
-    end = min(start + length, len(bits))
-    slice_bits = bits[start:end]
-    val = int_from_bits(slice_bits)
+
+    total_bits = len(data) * 8
+
+    # Strict bounds
+    if start < 0 or (start + length) > total_bits:
+        raise ValueError(
+            f"extract_bits: out of bounds (start={start}, length={length}, total={total_bits})"
+        )
+
+    # Convert to big integer
+    big = int.from_bytes(data, "big")
+
+    # Compute shift from MSB
+    shift = total_bits - (start + length)
+
+    # Mask for exactly `length` bits
+    mask = (1 << length) - 1
+
+    value = (big >> shift) & mask
+
+    # Signed two's complement
     if signed:
-        # sign bit is MSB of the slice
-        sign_bit = 1 << (len(slice_bits) - 1)
-        if val & sign_bit:
-            # two's complement negative
-            val = val - (1 << len(slice_bits))
-    return val
+        sign_bit = 1 << (length - 1)
+        if value & sign_bit:
+            value -= 1 << length
+
+    return value

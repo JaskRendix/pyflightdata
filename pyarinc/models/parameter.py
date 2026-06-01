@@ -90,6 +90,12 @@ class Parameter:
         Returns:
             Decoded value (float, int, str, bool, etc. depending on data_type)
         """
+        total_bits = len(data) * 8
+        if self.start_bit < 0 or (self.start_bit + self.bit_length) > total_bits:
+            raise ValueError(
+                f"Parameter {self.name}: out of bounds (start={self.start_bit}, len={self.bit_length}, total={total_bits})"
+            )
+
         raw = self.extract_bits_767(data, self.start_bit, self.bit_length, self.signed)
         return self.decode(raw)
 
@@ -159,7 +165,7 @@ class Parameter:
             (decoded_value, is_valid) tuple where is_valid=False if out of bounds
         """
         # Prefer explicit start_bit if set, otherwise compute from word fields
-        if self.start_bit is not None and self.start_bit > 0:
+        if self.start_bit is not None:
             start = self.start_bit
         else:
             start = self.compute_absolute_bit_start(words_per_subframe, word_bits)
@@ -217,23 +223,21 @@ class Parameter:
     def _decode_bnr(self, raw_bits: int) -> float:
         """Decode Binary Number (BNR) format.
 
-        BNR is a signed or unsigned integer with optional scale and offset.
+        Notes:
+            - Signed interpretation is handled by extract_bits(), so `raw_bits`
+            is already a correctly signed integer when this method is called.
+            - This method applies only scale and offset transformations.
+            - If no scale or offset is provided, the raw integer value is returned
+            as a float.
 
         BNR calculation:
-            1. If signed, interpret two's complement
-            2. Convert to float
-            3. Apply scale (multiply) if present
-            4. Apply offset (add) if present
+            value = raw_bits
+            if scale is provided:  value *= scale
+            if offset is provided: value += offset
 
         Returns:
-            float value (or int if no scale/offset)
+            float: scaled and offset-adjusted numeric value.
         """
-        # Handle signed two's complement
-        if self.signed:
-            sign_bit = 1 << (self.bit_length - 1)
-            if raw_bits & sign_bit:
-                raw_bits = raw_bits - (1 << self.bit_length)
-
         val = float(raw_bits)
         if self.scale is not None:
             val *= self.scale
