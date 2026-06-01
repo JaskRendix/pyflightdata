@@ -1,67 +1,192 @@
+from __future__ import annotations
+
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from ..utils.bitops import extract_bits
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Parameter:
+    """Represents a single parameter from ARINC 717 or ARINC 767 data.
+
+    Supports flexible bit-level extraction and decoding into various ARINC types:
+    BNR (binary), BCD (binary-coded decimal), DISCRETE, CHAR/ASCII, UTC, PACKED, COB.
+
+    Can be used in two modes:
+
+    1. ARINC 767 (absolute bit indexing):
+       - start_bit: absolute bit position in frame data (0-based MSB-first)
+       - decode_raw_from_bytes(data) -> decoded_value
+
+    2. ARINC 717 (word-based indexing):
+       - subframe, word, bit_offset: locate parameter in frame structure
+       - decode_from_frame(frame_bytes, ...) -> (decoded_value, valid)
+    """
+
     name: str
+    """Parameter identifier/name."""
+
     start_bit: int
+    """Absolute bit position (0-based, MSB-first) for ARINC 767."""
+
     bit_length: int
-    data_type: str  # 'BNR', 'BCD', 'DISCRETE', 'CHAR', 'UTC', 'PACKED', 'COB'
+    """Number of bits occupied by parameter (1-32)."""
+
+    data_type: str
+    """Data type: 'BNR', 'BCD', 'DISCRETE', 'CHAR', 'ASCII', 'UTC', 'PACKED', 'COB'."""
+
     scale: float | None = None
+    """Scale factor for BNR decoding (multiplier)."""
+
     offset: float | None = None
+    """Offset for BNR decoding (additive)."""
+
     signed: bool = False
+    """If True, interpret BNR as two's complement signed integer."""
 
     # Scheduling fields (ARINC 717)
     rate: float = 1.0
+    """Sampling rate in Hz (used by decoder for rate-based scheduling)."""
+
     subframe: int = 0
+    """ARINC 717 subframe index."""
+
     word: int = 0
+    """ARINC 717 word index within subframe."""
+
     bit_offset: int = 0
+    """Bit offset within word (ARINC 717)."""
+
     superframe: int | None = None
+    """Superframe index for multi-frame parameters (ARINC 717)."""
+
     superframe_group_count: int = 4
+    """Number of frames in superframe group (ARINC 717)."""
 
     # ARINC 767-specific metadata
     frame_id_767: int | None = None
-    cob_formula: str | None = None  # optional formula string from VEC/PRM
+    """Frame ID indicating which frame contains this parameter (ARINC 767)."""
+
+    cob_formula: str | None = None
+    """Optional formula for COB (Computed On Board) parameters.
+    
+    Evaluated with restricted namespace: {"raw": <bit_value>, "scale": <scale>, "offset": <offset>}
+    Example: "raw * 0.00390625" for Mach computation.
+    """
 
     def decode_raw_from_bytes(self, data: bytes) -> Any:
-        """Decode using absolute start_bit (used for ARINC 767)."""
-        raw = extract_bits(data, self.start_bit, self.bit_length, signed=self.signed)
+        """Decode from frame data using absolute start_bit (ARINC 767 style).
+
+        Extracts bits from data using start_bit as absolute index, then decodes
+        according to data_type. Used by Arinc767Decoder.
+
+        Args:
+            data: frame data section (bytes 10 onwards from ARINC 767 frame)
+
+        Returns:
+            Decoded value (float, int, str, bool, etc. depending on data_type)
+        """
+        raw = self.extract_bits_767(data, self.start_bit, self.bit_length, self.signed)
         return self.decode(raw)
+
+    @staticmethod
+    def extract_bits_767(
+        data: bytes, start_bit: int, length: int, signed: bool = False
+    ) -> int:
+        """Extract bits using 0-based MSB-first indexing (ARINC 767 style).
+
+        Supports arbitrary bit extraction including cross-byte boundaries.
+        Does not require 32-bit alignment.
+
+        Args:
+            data: source bytes buffer
+            start_bit: bit position (0 = MSB of byte 0)
+            length: number of bits to extract (1-32)
+            signed: if True, interpret as two's complement signed integer
+
+        Returns:
+            Integer value of extracted bits
+
+        Example:
+            data = b'\\x12\\x34\\x56'
+            extract_bits_767(data, 0, 8)    # -> 0x12 (first byte)
+            extract_bits_767(data, 4, 8)    # -> cross-byte extraction
+            extract_bits_767(data, 8, 16)   # -> 0x3456 (two bytes)
+        """
+        return extract_bits(data, start_bit, length, signed)
 
     def compute_absolute_bit_start(
         self, words_per_subframe: int, word_bits: int
     ) -> int:
-        """Compute MSB-indexed bit start for ARINC 717 frames."""
+        """Compute MSB-indexed bit start for ARINC 717 frames.
+
+        Calculates absolute bit position from subframe, word, and bit_offset fields.
+        Used by ARINC 717 decoder when parameters are defined in word-based format.
+
+        Args:
+            words_per_subframe: number of words per subframe (typically 4)
+            word_bits: bits per word (typically 12)
+
+        Returns:
+            Absolute bit position (0-based MSB-first)
+
+        Formula:
+            bit_start = subframe * (words_per_subframe * word_bits)
+                      + word * word_bits
+                      + bit_offset
+        """
         subframe_bits = words_per_subframe * word_bits
         return self.subframe * subframe_bits + self.word * word_bits + self.bit_offset
 
     def decode_from_frame(
         self, frame_bytes: bytes, words_per_subframe: int, word_bits: int
     ) -> tuple[Any, bool]:
-        """Decode this parameter from a full frame bytes buffer.
+        """Decode this parameter from a full frame bytes buffer (ARINC 717 style).
 
-        If start_bit is provided, use it directly (simple tests).
-        Otherwise compute from subframe/word/bit_offset (real ARINC 717).
+        Used by Arinc717Decoder. Supports both absolute start_bit indexing and
+        word-based indexing (subframe/word/bit_offset).
+
+        Args:
+            frame_bytes: complete frame bytes buffer
+            words_per_subframe: words per subframe (typically 4)
+            word_bits: bits per word (typically 12)
+
+        Returns:
+            (decoded_value, is_valid) tuple where is_valid=False if out of bounds
         """
-
-        # If start_bit is explicitly set, use it
-        if self.start_bit is not None:
+        # Prefer explicit start_bit if set, otherwise compute from word fields
+        if self.start_bit is not None and self.start_bit > 0:
             start = self.start_bit
         else:
             start = self.compute_absolute_bit_start(words_per_subframe, word_bits)
 
         total_bits = len(frame_bytes) * 8
         if start < 0 or (start + self.bit_length) > total_bits:
+            logger.debug(
+                f"Parameter {self.name}: out of bounds (start={start}, length={self.bit_length}, total={total_bits})"
+            )
             return (None, False)
 
         raw = extract_bits(frame_bytes, start, self.bit_length, signed=self.signed)
-        return (self.decode(raw), True)
+        decoded = self.decode(raw)
+        return (decoded, True)
 
     def decode(self, raw_bits: int) -> Any:
-        """Decode raw integer bits according to ARINC data type."""
+        """Decode raw integer bits according to ARINC data_type.
+
+        Dispatches to type-specific decoders based on self.data_type.
+        Supports all ARINC 767 types: BNR, BCD, DISCRETE, CHAR, UTC, PACKED, COB.
+
+        Args:
+            raw_bits: extracted integer bit value
+
+        Returns:
+            Decoded value (type depends on data_type)
+        """
         if self.data_type == "BNR":
             return self._decode_bnr(raw_bits)
 
@@ -83,9 +208,27 @@ class Parameter:
         if self.data_type == "COB":
             return self._decode_cob(raw_bits)
 
+        # Fallback: return raw value
+        logger.warning(
+            f"Parameter {self.name}: unknown data_type '{self.data_type}', returning raw value"
+        )
         return raw_bits
 
     def _decode_bnr(self, raw_bits: int) -> float:
+        """Decode Binary Number (BNR) format.
+
+        BNR is a signed or unsigned integer with optional scale and offset.
+
+        BNR calculation:
+            1. If signed, interpret two's complement
+            2. Convert to float
+            3. Apply scale (multiply) if present
+            4. Apply offset (add) if present
+
+        Returns:
+            float value (or int if no scale/offset)
+        """
+        # Handle signed two's complement
         if self.signed:
             sign_bit = 1 << (self.bit_length - 1)
             if raw_bits & sign_bit:
@@ -99,11 +242,26 @@ class Parameter:
         return val
 
     def _decode_discrete(self, raw_bits: int) -> Any:
+        """Decode DISCRETE format.
+
+        DISCRETE is either a single-bit boolean or multi-bit integer.
+
+        Returns:
+            bool if bit_length==1, else int
+        """
         if self.bit_length == 1:
             return bool(raw_bits)
         return int(raw_bits)
 
     def _decode_bcd(self, raw_bits: int) -> str:
+        """Decode Binary-Coded Decimal (BCD) format.
+
+        BCD packs decimal digits into 4-bit nibbles.
+        Example: 0x123 represents decimal 123 (digits 1, 2, 3).
+
+        Returns:
+            str decimal representation
+        """
         if raw_bits == 0:
             return "0"
         digits = []
@@ -114,11 +272,25 @@ class Parameter:
         return "".join(reversed(digits))
 
     def _decode_char(self, raw_bits: int) -> str:
+        """Decode CHARACTER/ASCII format.
+
+        Packs ASCII characters into byte boundaries.
+
+        Returns:
+            str with ASCII characters, trailing nulls stripped
+        """
         byte_len = (self.bit_length + 7) // 8
         b = int(raw_bits).to_bytes(byte_len, "big")
         return b.rstrip(b"\x00").decode("ascii", errors="replace")
 
     def _decode_utc(self, raw_bits: int) -> str:
+        """Decode UTC time format.
+
+        UTC is typically encoded as BCD HH:MM:SS (6 decimal digits).
+
+        Returns:
+            str in format "HH:MM:SS"
+        """
         s = str(self._bcd_from_int(raw_bits)).rjust(6, "0")
         hh = int(s[0:2])
         mm = int(s[2:4])
@@ -126,27 +298,58 @@ class Parameter:
         return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
     def _decode_cob(self, raw_bits: int) -> Any:
-        """
-        ARINC 767 COB (Computed On Board) parameters may require formulas.
-        If a formula is provided in the config, evaluate it safely.
-        Otherwise return the raw integer.
+        """Decode Computed On Board (COB) parameter.
+
+        COB parameters may reference a formula for computation.
+        If cob_formula is provided, it is evaluated with restricted namespace.
+        Otherwise returns raw integer.
+
+        Formula evaluation context:
+            - "raw": the extracted bit value
+            - "scale": self.scale (or 1.0 if None)
+            - "offset": self.offset (or 0.0 if None)
+
+        Example:
+            cob_formula="raw * 0.00390625" -> Mach computation
+            cob_formula="raw / 100.0 + offset" -> with offset
+
+        Returns:
+            Computed value (typically float) or raw int if no formula
+
+        Safety:
+            Uses restricted eval() with no __builtins__ access.
         """
         if self.cob_formula:
-            # Safe evaluation context: only raw_bits, scale, offset allowed
             ctx = {
                 "raw": raw_bits,
                 "scale": self.scale or 1.0,
                 "offset": self.offset or 0.0,
             }
             try:
-                return eval(self.cob_formula, {"__builtins__": {}}, ctx)
-            except Exception:
+                result = eval(self.cob_formula, {"__builtins__": {}}, ctx)
+                logger.debug(f"Parameter {self.name}: COB formula evaluated: {result}")
+                return result
+            except Exception as e:
+                logger.warning(
+                    f"Parameter {self.name}: COB formula evaluation failed: {e}, returning raw value"
+                )
                 return raw_bits
 
         return raw_bits
 
     @staticmethod
     def _bcd_from_int(value: int) -> int:
+        """Convert integer to Binary-Coded Decimal representation.
+
+        Example:
+            123 (decimal) -> 0x123 (BCD)
+
+        Args:
+            value: integer to convert
+
+        Returns:
+            BCD encoded integer
+        """
         out = 0
         multiplier = 1
         v = value
