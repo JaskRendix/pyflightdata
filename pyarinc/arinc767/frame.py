@@ -151,7 +151,7 @@ class Arinc767FrameParser:
 
     @staticmethod
     def parse_frame(
-        data: bytes, frame_start: int, frame_index: int
+        data: bytes, frame_start: int, frame_index: int, strict: bool = False
     ) -> Arinc767Frame | None:
         """Parse a single frame starting at frame_start byte offset.
 
@@ -259,8 +259,13 @@ class Arinc767FrameParser:
             )
             return None
 
-        # Validate trailer (warn but don't fail)
+        # Validate trailer
         if not frame.validate_trailer():
+            if strict:
+                logger.debug(
+                    f"Frame {frame_index}: trailer mismatch (strict mode) at offset {frame_start:#x}"
+                )
+                return None
             logger.warning(
                 f"Frame {frame_index}: trailer type/id mismatch "
                 f"(header: type=0x{frame_type:02x}, id=0x{frame_id:02x}) at offset {frame_start:#x}"
@@ -272,7 +277,9 @@ class Arinc767FrameParser:
         return frame
 
     @staticmethod
-    def iter_frames(data: bytes) -> Iterable[Arinc767Frame]:
+    def iter_frames(
+        data: bytes, strict: bool = False, timestamp_wrap: bool = False
+    ) -> Iterable[Arinc767Frame]:
         """Iterate over all valid frames in a byte buffer.
 
         Scans from start to end, finds frame boundaries, validates structure,
@@ -288,6 +295,8 @@ class Arinc767FrameParser:
         pos = 0
         frame_index = 0
         gap_logged = False
+        last_timestamp = None
+        cumulative_offset = 0
 
         while pos < len(data):
             # Find next valid frame start
@@ -311,9 +320,41 @@ class Arinc767FrameParser:
                     f"Frame {frame_index}: gap of {gap_size} bytes before frame at offset {frame_start:#x}"
                 )
 
-            # Parse frame at this position
-            frame = Arinc767FrameParser.parse_frame(data, frame_start, frame_index)
+            # Overlapping frame heuristic: if another sync appears inside the
+            # declared frame body, treat the inner sync as the next candidate.
+            inner_sync = None
+            end_search = min(frame_start + frame_len, len(data) - 1)
+            for i in range(frame_start + 1, end_search):
+                try:
+                    word = struct.unpack(">H", data[i : i + 2])[0]
+                except struct.error:
+                    continue
+                if word == Arinc767FrameParser.SYNC_WORD:
+                    inner_sync = i
+                    break
+
+            if inner_sync is not None:
+                logger.warning(
+                    f"Frame {frame_index}: sync detected inside frame at x{inner_sync:#x}, skipping to inner sync"
+                )
+                pos = inner_sync
+                continue
+
+            # Parse frame at this position (respect strict mode)
+            frame = Arinc767FrameParser.parse_frame(
+                data, frame_start, frame_index, strict=strict
+            )
             if frame is not None:
+                # Timestamp wrap handling: detect decreasing timestamps and add 24h rollover
+                if timestamp_wrap:
+                    ts = frame.timestamp_ms
+                    if last_timestamp is not None and ts < last_timestamp:
+                        # add 24 hours in ms
+                        cumulative_offset += 24 * 3600 * 1000
+                    ts_adj = ts + cumulative_offset
+                    frame.timestamp_ms = ts_adj
+                    last_timestamp = ts_adj
+
                 yield frame
                 frame_index += 1
 
