@@ -56,7 +56,7 @@ Tests cover:
 
 ### ARINC 767
 - Frame boundary detection (sync word, header, trailer)
-- Timestamp extraction
+- Timestamp extraction with wrap‑around handling
 - Parameter extraction using absolute bit indexing
 - VEC/PRM‑based configuration (word, bit offset, length, rate)
 - Full data‑type support:
@@ -67,7 +67,9 @@ Tests cover:
   - CHAR / ASCII
   - UTC
   - COB (Computed On Board) with formula evaluation
-- Rate‑based scheduling (same semantics as ARINC 717)
+- Scheduling:
+  - Timestamp‑based time axis (primary)
+  - Rate‑based scheduling (fallback, 717‑compatible)
 - DataFrame output with time, parameter_name, value, frame_index, frame_id, valid
 
 ---
