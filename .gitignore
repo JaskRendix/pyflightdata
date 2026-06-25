@@ -13,6 +13,7 @@ wgl/
 Docs/
 
 # Test cache
+.coverage
 .pytest_cache/
 
 # Build artifacts

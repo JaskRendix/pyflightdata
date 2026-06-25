@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest",
+    "pytest-cov",
 ]
 
 [build-system]
@@ -29,4 +30,4 @@ include = ["pyarinc*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-addopts = "-q"
+addopts = "--cov=pyarinc --cov-report=term-missing"
