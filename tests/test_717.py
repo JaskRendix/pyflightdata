@@ -17,14 +17,10 @@ def test_vec_bitrange_parsing_717(tmp_path: Path):
 
     mapping = parse_vec_file_717(p)
 
-    # ALT
-    assert "ALT" in mapping
-    assert mapping["ALT"]["word"] == 1  # W2 → index 1
+    assert mapping["ALT"]["word"] == 1
     assert mapping["ALT"]["bit_offset"] == 3
     assert mapping["ALT"]["length"] == 8
 
-    # SPD
-    assert "SPD" in mapping
     assert mapping["SPD"]["word"] == 2
     assert mapping["SPD"]["bit_offset"] == 1
     assert mapping["SPD"]["length"] == 8
@@ -48,14 +44,12 @@ def test_prm_line_parsing_717(tmp_path: Path):
     mapping = parse_prm_file(p)
     params = prm_to_parameters(mapping)
 
-    # ALT
     assert params["ALT"].subframe == 0
     assert params["ALT"].word == 2
     assert params["ALT"].bit_offset == 3
     assert params["ALT"].bit_length == 8
     assert params["ALT"].rate == 4.0
 
-    # TEMP
     assert params["TEMP"].subframe == 1
     assert params["TEMP"].word == 5
     assert params["TEMP"].bit_offset == 0
