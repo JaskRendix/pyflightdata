@@ -104,6 +104,37 @@ class Arinc767FrameParser:
         return positions
 
     @staticmethod
+    def _looks_like_frame_start(data: bytes, pos: int) -> bool:
+        """Check whether `pos` is a *plausible* frame start, not just a
+        coincidental 2-byte match of the sync word.
+
+        Requires a valid sync word AND a length field that is in range and
+        fits within the buffer. This is the same test used by
+        find_valid_frame_start(), reused here so "looks like a frame" has
+        one consistent definition across the parser.
+        """
+        if pos + Arinc767FrameParser.HEADER_SIZE > len(data):
+            return False
+        try:
+            word = struct.unpack(">H", data[pos : pos + 2])[0]
+        except struct.error:
+            return False
+        if word != Arinc767FrameParser.SYNC_WORD:
+            return False
+        try:
+            frame_len = struct.unpack(">H", data[pos + 2 : pos + 4])[0]
+        except struct.error:
+            return False
+        if (
+            frame_len < Arinc767FrameParser.MIN_FRAME_SIZE
+            or frame_len > Arinc767FrameParser.MAX_FRAME_SIZE
+        ):
+            return False
+        if pos + frame_len > len(data):
+            return False
+        return True
+
+    @staticmethod
     def find_valid_frame_start(data: bytes, start_pos: int) -> tuple[int, int] | None:
         """Find next valid frame starting at or after start_pos.
 
@@ -320,22 +351,23 @@ class Arinc767FrameParser:
                     f"Frame {frame_index}: gap of {gap_size} bytes before frame at offset {frame_start:#x}"
                 )
 
-            # Overlapping frame heuristic: if another sync appears inside the
-            # declared frame body, treat the inner sync as the next candidate.
+            # Overlapping frame heuristic: only trust an inner sync word if
+            # it ALSO has a plausible header (valid length field that fits
+            # in the buffer). A bare 0xEB90 byte pattern inside payload
+            # data is common and must not be treated as a frame boundary
+            # on its own, or valid frames get truncated/dropped.
             inner_sync = None
             end_search = min(frame_start + frame_len, len(data) - 1)
             for i in range(frame_start + 1, end_search):
-                try:
-                    word = struct.unpack(">H", data[i : i + 2])[0]
-                except struct.error:
-                    continue
-                if word == Arinc767FrameParser.SYNC_WORD:
+                if Arinc767FrameParser._looks_like_frame_start(data, i):
                     inner_sync = i
                     break
 
             if inner_sync is not None:
                 logger.warning(
-                    f"Frame {frame_index}: sync detected inside frame at x{inner_sync:#x}, skipping to inner sync"
+                    f"Frame {frame_index}: embedded frame header detected at "
+                    f"{inner_sync:#x} inside frame starting at {frame_start:#x}; "
+                    f"resuming parse from inner frame"
                 )
                 pos = inner_sync
                 continue
