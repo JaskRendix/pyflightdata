@@ -25,19 +25,29 @@ class Parameter:
     2. ARINC 717 (word-based indexing):
        - subframe, word, bit_offset: locate parameter in frame structure
        - decode_from_frame(frame_bytes, ...) -> (decoded_value, valid)
+
+    Note on start_bit:
+        start_bit is intentionally Optional. 717-style parameters should leave
+        it as None and rely on subframe/word/bit_offset; decode_from_frame()
+        only falls back to computing the position from those fields when
+        start_bit is None. Setting start_bit=0 on a 717 parameter (instead of
+        leaving it None) silently forces decoding from bit 0 of the frame
+        regardless of subframe/word/bit_offset -- do not do that.
     """
 
     name: str
     """Parameter identifier/name."""
-
-    start_bit: int
-    """Absolute bit position (0-based, MSB-first) for ARINC 767."""
 
     bit_length: int
     """Number of bits occupied by parameter (1-32)."""
 
     data_type: str
     """Data type: 'BNR', 'BCD', 'DISCRETE', 'CHAR', 'ASCII', 'UTC', 'PACKED', 'COB'."""
+
+    start_bit: int | None = None
+    """Absolute bit position (0-based, MSB-first). Required for ARINC 767
+    (decode_raw_from_bytes). For ARINC 717, leave as None so
+    decode_from_frame() computes the position from subframe/word/bit_offset."""
 
     scale: float | None = None
     """Scale factor for BNR decoding (multiplier)."""
@@ -73,10 +83,85 @@ class Parameter:
 
     cob_formula: str | None = None
     """Optional formula for COB (Computed On Board) parameters.
-    
+
     Evaluated with restricted namespace: {"raw": <bit_value>, "scale": <scale>, "offset": <offset>}
     Example: "raw * 0.00390625" for Mach computation.
     """
+    # ----------------------------------------------------------------------
+    # Factory constructors
+    # ----------------------------------------------------------------------
+
+    @classmethod
+    def from_717(
+        cls,
+        name: str,
+        bit_length: int,
+        data_type: str,
+        *,
+        subframe: int,
+        word: int,
+        bit_offset: int,
+        rate: float = 1.0,
+        scale: float | None = None,
+        offset: float | None = None,
+        signed: bool = False,
+        superframe: int | None = None,
+        superframe_group_count: int = 4,
+    ) -> "Parameter":
+        """
+        Construct an ARINC 717 parameter.
+
+        start_bit is intentionally left as None so decode_from_frame()
+        computes the absolute bit position from subframe/word/bit_offset.
+        """
+        return cls(
+            name=name,
+            bit_length=bit_length,
+            data_type=data_type,
+            start_bit=None,  # critical: 717 parameters must NOT set start_bit
+            scale=scale,
+            offset=offset,
+            signed=signed,
+            rate=rate,
+            subframe=subframe,
+            word=word,
+            bit_offset=bit_offset,
+            superframe=superframe,
+            superframe_group_count=superframe_group_count,
+        )
+
+    @classmethod
+    def from_767(
+        cls,
+        name: str,
+        bit_length: int,
+        data_type: str,
+        *,
+        start_bit: int,
+        frame_id_767: int | None = None,
+        scale: float | None = None,
+        offset: float | None = None,
+        signed: bool = False,
+        rate: float = 1.0,
+        cob_formula: str | None = None,
+    ) -> "Parameter":
+        """
+        Construct an ARINC 767 parameter.
+
+        Requires an absolute start_bit (0-based MSB-first).
+        """
+        return cls(
+            name=name,
+            bit_length=bit_length,
+            data_type=data_type,
+            start_bit=start_bit,
+            frame_id_767=frame_id_767,
+            scale=scale,
+            offset=offset,
+            signed=signed,
+            rate=rate,
+            cob_formula=cob_formula,
+        )
 
     def decode_raw_from_bytes(self, data: bytes) -> Any:
         """Decode from frame data using absolute start_bit (ARINC 767 style).
@@ -89,7 +174,18 @@ class Parameter:
 
         Returns:
             Decoded value (float, int, str, bool, etc. depending on data_type)
+
+        Raises:
+            ValueError: if start_bit is not set, or extraction is out of bounds.
         """
+        if self.start_bit is None:
+            raise ValueError(
+                f"Parameter {self.name}: start_bit is not set; "
+                "decode_raw_from_bytes() requires an absolute start_bit "
+                "(ARINC 767 style). Use decode_from_frame() for "
+                "subframe/word/bit_offset-based (ARINC 717) parameters."
+            )
+
         total_bits = len(data) * 8
         if self.start_bit < 0 or (self.start_bit + self.bit_length) > total_bits:
             raise ValueError(
@@ -290,12 +386,13 @@ class Parameter:
     def _decode_utc(self, raw_bits: int) -> str:
         """Decode UTC time format.
 
-        UTC is typically encoded as BCD HH:MM:SS (6 decimal digits).
+        UTC is typically encoded as BCD HH:MM:SS (6 decimal digits) packed
+        directly into nibbles, e.g. 23:59:59 -> raw_bits == 0x235959.
 
         Returns:
             str in format "HH:MM:SS"
         """
-        s = str(self._bcd_from_int(raw_bits)).rjust(6, "0")
+        s = self._decode_bcd(raw_bits).rjust(6, "0")
         hh = int(s[0:2])
         mm = int(s[2:4])
         ss = int(s[4:6])
@@ -322,6 +419,10 @@ class Parameter:
 
         Safety:
             Uses restricted eval() with no __builtins__ access.
+            NOTE: this is not a true sandbox -- attribute-chain sandbox
+            escapes are possible in plain Python eval(). Do not load
+            cob_formula values from untrusted sources without further
+            hardening (e.g. an AST allowlist).
         """
         if self.cob_formula:
             ctx = {
