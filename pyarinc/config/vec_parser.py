@@ -64,15 +64,12 @@ def parse_vec_file_717(path: Path) -> dict[str, Any]:
                 continue
 
         # superframe
-        sf = None
         for tok in parts:
             if tok.upper().startswith("SF="):
                 try:
-                    sf = int(tok.split("=")[1])
+                    entry["superframe"] = int(tok.split("=")[1])
                 except Exception:
                     pass
-        if sf is not None:
-            entry["superframe"] = sf
 
         entry.setdefault("subframe", 0)
         out[name] = entry
@@ -83,7 +80,7 @@ def parse_vec_file_717(path: Path) -> dict[str, Any]:
 def vec_to_parameters_717(
     mapping: dict[str, Any], default_rate: float = 1.0
 ) -> dict[str, Parameter]:
-    """Legacy ARINC 717 converter."""
+    """Convert ARINC 717 VEC mapping to Parameter objects."""
     out: dict[str, Parameter] = {}
 
     for name, md in mapping.items():
@@ -93,18 +90,25 @@ def vec_to_parameters_717(
         length = int(md.get("length", 8))
         rate = float(md.get("rate", default_rate))
         superframe = md.get("superframe")
+        dtype = md.get("type", "DISCRETE")
+        scale = md.get("scale")
+        offset = md.get("offset")
+        signed = md.get("signed", False)
 
-        p = Parameter(
+        p = Parameter.from_717(
             name=name,
-            start_bit=0,  # 717 uses word/bit_offset, not absolute
             bit_length=length,
-            data_type="DISCRETE",
-            rate=rate,
+            data_type=dtype,
             subframe=subframe,
             word=word,
             bit_offset=bit_offset,
+            rate=rate,
             superframe=superframe,
+            signed=signed,
+            scale=scale,
+            offset=offset,
         )
+
         out[name] = p
 
     return out
@@ -189,6 +193,32 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
             if tok.upper().startswith("COB="):
                 entry["cob_formula"] = tok.split("=", 1)[1]
 
+        # type=
+        for tok in parts:
+            if tok.upper().startswith("TYPE="):
+                entry["type"] = tok.split("=", 1)[1]
+
+        # scale=
+        for tok in parts:
+            if tok.upper().startswith("SCALE="):
+                try:
+                    entry["scale"] = float(tok.split("=", 1)[1])
+                except Exception:
+                    pass
+
+        # offset=
+        for tok in parts:
+            if tok.upper().startswith("OFFSET="):
+                try:
+                    entry["offset"] = float(tok.split("=", 1)[1])
+                except Exception:
+                    pass
+
+        # signed=
+        for tok in parts:
+            if tok.upper().startswith("SIGNED="):
+                entry["signed"] = tok.split("=", 1)[1].lower() == "true"
+
         out[name] = entry
 
     return out
@@ -209,17 +239,25 @@ def vec_to_parameters_767(
 
         frame_id_767 = md.get("frame_id_767")
         cob_formula = md.get("cob_formula")
+        dtype = md.get("type", "DISCRETE")
+        scale = md.get("scale")
+        offset = md.get("offset")
+        signed = md.get("signed", False)
 
+        # ARINC 767 absolute bit indexing inside frame data section
         start_bit = word * 32 + bit_offset
 
-        p = Parameter(
+        p = Parameter.from_767(
             name=name,
-            start_bit=start_bit,
             bit_length=length,
-            data_type="DISCRETE",
-            rate=rate,
+            data_type=dtype,
+            start_bit=start_bit,
             frame_id_767=frame_id_767,
+            rate=rate,
             cob_formula=cob_formula,
+            scale=scale,
+            offset=offset,
+            signed=signed,
         )
 
         out[name] = p
@@ -228,12 +266,10 @@ def vec_to_parameters_767(
 
 
 def parse_vec_file(path: Path) -> dict[str, Any]:
-    """Default parser = ARINC 717 (legacy)."""
     return parse_vec_file_717(path)
 
 
 def vec_to_parameters(
     mapping: dict[str, Any], default_rate: float = 1.0
 ) -> dict[str, Parameter]:
-    """Default converter = ARINC 717 (legacy)."""
     return vec_to_parameters_717(mapping, default_rate)

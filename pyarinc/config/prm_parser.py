@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..models.parameter import Parameter
 
 
 def parse_prm_file(path: Path) -> dict[str, Any]:
@@ -48,7 +53,7 @@ def parse_prm_file(path: Path) -> dict[str, Any]:
     return out
 
 
-def prm_to_parameters(mapping: dict[str, Any]) -> dict[str, "Parameter"]:
+def prm_to_parameters(mapping: dict[str, Any]) -> dict[str, Parameter]:
     """Convert a PRM mapping (from parse_prm_file) to Parameter objects."""
     from ..models.parameter import Parameter
 
@@ -63,26 +68,23 @@ def prm_to_parameters(mapping: dict[str, Any]) -> dict[str, "Parameter"]:
         scale = md.get("scale")
         offset = md.get("offset")
         dtype = md.get("type", "DISCRETE")
-        p = Parameter(
+
+        p = Parameter.from_717(
             name=name,
-            start_bit=0,
             bit_length=length,
             data_type=dtype,
-            rate=rate,
             subframe=subframe,
             word=word,
             bit_offset=bit_offset,
+            rate=rate,
             superframe=superframe,
         )
+
         if scale is not None:
-            try:
-                p.scale = float(scale)
-            except Exception:
-                pass
+            p.scale = float(scale)
         if offset is not None:
-            try:
-                p.offset = float(offset)
-            except Exception:
-                pass
+            p.offset = float(offset)
+
         out[name] = p
+
     return out

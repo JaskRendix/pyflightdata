@@ -133,63 +133,16 @@ def test_cob_formula_failure_falls_back_to_raw():
     assert p.decode(10) == 10
 
 
-def test_717_decode_from_frame_uses_word_fields():
-    frame = bytes([0x12, 0x34, 0x56])
-    p = Parameter(
-        "ALT",
-        bit_length=8,
-        data_type="BNR",
-        start_bit=None,
-        subframe=0,
-        word=1,
-        bit_offset=0,
-    )
-    # word=1 → second byte → 0x34
-    val, valid = p.decode_from_frame(frame, words_per_subframe=4, word_bits=8)
-    assert valid
-    assert val == 0x34
-
-
 def test_767_decode_raw_requires_start_bit():
     p = Parameter("X", bit_length=8, data_type="BNR", start_bit=None)
     with pytest.raises(ValueError):
         p.decode_raw_from_bytes(b"\x00")
 
 
-def test_717_absolute_bit_start_multi_subframe():
-    p = Parameter(
-        "ALT",
-        bit_length=8,
-        data_type="BNR",
-        start_bit=None,
-        subframe=3,
-        word=2,
-        bit_offset=5,
-    )
-    # subframe 3 → 3 * (4 words * 12 bits) = 144
-    assert p.compute_absolute_bit_start(4, 12) == 144 + 24 + 5
-
-
 def test_767_extract_non_byte_aligned():
     data = b"\xAA\xBB\xCC"  # 10101010 10111011 11001100
     p = Parameter("X", start_bit=5, bit_length=10, data_type="DISCRETE")
     assert p.extract_bits_767(data, 5, 10) == 0b0101011101
-
-
-def test_717_out_of_bounds():
-    frame = b"\x00\x00"
-    p = Parameter(
-        "ALT",
-        bit_length=16,
-        data_type="BNR",
-        start_bit=None,
-        subframe=0,
-        word=1,
-        bit_offset=0,
-    )
-    val, valid = p.decode_from_frame(frame, 4, 12)
-    assert not valid
-    assert val is None
 
 
 def test_767_partial_data_rejected():

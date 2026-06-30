@@ -87,9 +87,6 @@ class Parameter:
     Evaluated with restricted namespace: {"raw": <bit_value>, "scale": <scale>, "offset": <offset>}
     Example: "raw * 0.00390625" for Mach computation.
     """
-    # ----------------------------------------------------------------------
-    # Factory constructors
-    # ----------------------------------------------------------------------
 
     @classmethod
     def from_717(
