@@ -96,7 +96,11 @@ class Arinc767Decoder:
         rows: list[dict[str, Any]] = []
 
         for frame_index, frame in enumerate(frames):
-            frame_time = frame_index / fps
+            frame_time = (
+                frame.timestamp_ms / 1000.0
+                if frame.timestamp_ms is not None
+                else frame_index / fps
+            )
             frame_data = frame.data
 
             # If no data, still emit invalid scheduled rows
