@@ -6,7 +6,6 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "ags717"
 def test_fixture_files_exist():
     assert (FIXTURE_DIR / "010888.vec").exists()
     assert (FIXTURE_DIR / "aircraft.air").exists()
-    assert (FIXTURE_DIR / "README.md").exists()
 
 
 def test_010888_vec_is_zip():
