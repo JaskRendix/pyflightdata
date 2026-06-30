@@ -177,3 +177,110 @@ def test_vec_parser_767_tokens_and_hex_fid(tmp_path: Path) -> None:
     assert p4.start_bit == 3 * 32 + 0
     assert p4.bit_length == 12
     assert p4.cob_formula == "raw*2"
+
+
+def test_vec_767_type_token(tmp_path: Path):
+    text = "ALT W0B0-7 TYPE=BNR 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    assert mapping["ALT"]["type"] == "BNR"
+
+    params = vec_to_parameters_767(mapping)
+    assert params["ALT"].data_type == "BNR"
+
+
+def test_vec_767_signed_token(tmp_path: Path):
+    text = "ALT W0B0-7 TYPE=BNR SIGNED=true 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    assert mapping["ALT"]["signed"] is True
+
+    params = vec_to_parameters_767(mapping)
+    assert params["ALT"].signed is True
+
+
+def test_vec_767_scale_offset(tmp_path: Path):
+    text = "ALT W0B0-7 TYPE=BNR SCALE=0.01 OFFSET=100 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    assert mapping["ALT"]["scale"] == 0.01
+    assert mapping["ALT"]["offset"] == 100
+
+    params = vec_to_parameters_767(mapping)
+    assert params["ALT"].scale == 0.01
+    assert params["ALT"].offset == 100
+
+
+def test_vec_767_hex_fid_ignored(tmp_path: Path):
+    text = "ALT W0B0-7 TYPE=BNR FID=0x03 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    assert mapping["ALT"].get("frame_id_767") is None
+
+    params = vec_to_parameters_767(mapping)
+    assert params["ALT"].frame_id_767 is None
+
+
+def test_vec_767_no_unsupported_kwargs(tmp_path: Path):
+    text = "ALT W0B0-7 TYPE=BNR SIGNED=true SCALE=2 OFFSET=3 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    params = vec_to_parameters_767(mapping)
+
+    alt = params["ALT"]
+
+    assert hasattr(alt, "scale")
+    assert hasattr(alt, "offset")
+    assert hasattr(alt, "signed")
+
+    # No conv_config/options in 767 model
+    assert not hasattr(alt, "conv_config")
+    assert not hasattr(alt, "options")
+
+
+def test_vec_767_char_token(tmp_path: Path):
+    text = "STR W2B0-7 CHAR 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    assert mapping["STR"]["type"] == "CHAR"
+
+    params = vec_to_parameters_767(mapping)
+    assert params["STR"].data_type == "CHAR"
+
+
+def test_vec_767_bcd_token(tmp_path: Path):
+    text = "NUM W3B0-11 BCD 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    assert mapping["NUM"]["type"] == "BCD"
+
+    params = vec_to_parameters_767(mapping)
+    assert params["NUM"].data_type == "BCD"
+
+
+def test_vec_767_cob_formula_with_scale_offset(tmp_path: Path):
+    text = "MACH W0B0-15 COB=raw*scale+offset SCALE=2 OFFSET=3 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    params = vec_to_parameters_767(mapping)
+
+    p_mach = params["MACH"]
+    data = bytes([0x00, 0x10])  # raw = 16
+
+    assert p_mach.decode_raw_from_bytes(data) == 16

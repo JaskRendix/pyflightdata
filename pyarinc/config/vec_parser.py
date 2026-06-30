@@ -21,13 +21,16 @@ def _parse_bitrange_717(token: str) -> dict[str, int] | None:
     bstart = int(m.group("bstart"))
     bend = m.group("bend")
     bend_i = int(bend) if bend is not None else bstart
-    bit_offset = bstart
     length = bend_i - bstart + 1
-    return {"word": word - 1, "bit_offset": bit_offset, "length": length}
+    return {
+        "word": word - 1,  # 717 uses 12‑bit aligned words → 0‑based
+        "bit_offset": bstart,
+        "length": length,
+    }
 
 
 def parse_vec_file_717(path: Path) -> dict[str, Any]:
-    """Legacy ARINC 717 VEC parser."""
+    """ARINC 717 VEC parser with Phase‑3 token support."""
     out: dict[str, Any] = {}
     text = path.read_text(encoding="utf-8").strip()
 
@@ -55,7 +58,7 @@ def parse_vec_file_717(path: Path) -> dict[str, Any]:
                 entry.update(br)
                 break
 
-        # rate
+        # rate (last numeric token)
         for tok in reversed(parts):
             try:
                 entry["rate"] = float(tok)
@@ -71,6 +74,60 @@ def parse_vec_file_717(path: Path) -> dict[str, Any]:
                 except Exception:
                     pass
 
+        # TYPE=
+        for tok in parts:
+            if tok.upper().startswith("TYPE="):
+                entry["type"] = tok.split("=", 1)[1].upper()
+
+        # bare type tokens (BNR, BCD, CHAR)
+        for tok in parts:
+            upper = tok.upper()
+            if upper in ("BNR", "BCD", "CHAR"):
+                entry["type"] = upper
+
+        # SIGNED=
+        for tok in parts:
+            if tok.upper().startswith("SIGNED="):
+                entry["signed"] = tok.split("=", 1)[1].lower() == "true"
+
+        # SCALE=
+        for tok in parts:
+            if tok.upper().startswith("SCALE="):
+                try:
+                    entry["scale"] = float(tok.split("=", 1)[1])
+                except Exception:
+                    pass
+
+        # OFFSET=
+        for tok in parts:
+            if tok.upper().startswith("OFFSET="):
+                try:
+                    entry["offset"] = float(tok.split("=", 1)[1])
+                except Exception:
+                    pass
+
+        # CONV=  (BCD/CHAR digit width)
+        for tok in parts:
+            if tok.upper().startswith("CONV="):
+                try:
+                    entry["conv"] = int(tok.split("=", 1)[1])
+                except Exception:
+                    pass
+
+        # OPT=  (DISCRETE enumerations)
+        # Format: OPT=1:ON or OPT=0:OFF
+        options = []
+        for tok in parts:
+            if tok.upper().startswith("OPT="):
+                try:
+                    raw = tok.split("=", 1)[1]
+                    val, txt = raw.split(":", 1)
+                    options.append((int(val), txt))
+                except Exception:
+                    pass
+        if options:
+            entry["options"] = options
+
         entry.setdefault("subframe", 0)
         out[name] = entry
 
@@ -78,9 +135,10 @@ def parse_vec_file_717(path: Path) -> dict[str, Any]:
 
 
 def vec_to_parameters_717(
-    mapping: dict[str, Any], default_rate: float = 1.0
+    mapping: dict[str, Any],
+    default_rate: float = 1.0,
 ) -> dict[str, Parameter]:
-    """Convert ARINC 717 VEC mapping to Parameter objects."""
+    """Convert ARINC 717 VEC mapping to Parameter objects (Phase‑3)."""
     out: dict[str, Parameter] = {}
 
     for name, md in mapping.items():
@@ -90,10 +148,13 @@ def vec_to_parameters_717(
         length = int(md.get("length", 8))
         rate = float(md.get("rate", default_rate))
         superframe = md.get("superframe")
-        dtype = md.get("type", "DISCRETE")
+
+        dtype = md.get("type", "DISCRETE").upper()
         scale = md.get("scale")
         offset = md.get("offset")
         signed = md.get("signed", False)
+        # conv = md.get("conv")
+        # options = md.get("options")
 
         p = Parameter.from_717(
             name=name,
@@ -180,7 +241,7 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
                 continue
         entry.setdefault("rate", 1.0)
 
-        # FID=
+        # FID= (current implementation: decimal only, hex ignored)
         for tok in parts:
             if tok.upper().startswith("FID="):
                 try:
@@ -193,12 +254,18 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
             if tok.upper().startswith("COB="):
                 entry["cob_formula"] = tok.split("=", 1)[1]
 
-        # type=
+        # TYPE=
         for tok in parts:
             if tok.upper().startswith("TYPE="):
-                entry["type"] = tok.split("=", 1)[1]
+                entry["type"] = tok.split("=", 1)[1].upper()
 
-        # scale=
+        # bare type tokens (BNR, BCD, CHAR)
+        for tok in parts:
+            upper = tok.upper()
+            if upper in ("BNR", "BCD", "CHAR"):
+                entry["type"] = upper
+
+        # SCALE=
         for tok in parts:
             if tok.upper().startswith("SCALE="):
                 try:
@@ -206,7 +273,7 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
                 except Exception:
                     pass
 
-        # offset=
+        # OFFSET=
         for tok in parts:
             if tok.upper().startswith("OFFSET="):
                 try:
@@ -214,7 +281,7 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
                 except Exception:
                     pass
 
-        # signed=
+        # SIGNED=
         for tok in parts:
             if tok.upper().startswith("SIGNED="):
                 entry["signed"] = tok.split("=", 1)[1].lower() == "true"
@@ -239,7 +306,7 @@ def vec_to_parameters_767(
 
         frame_id_767 = md.get("frame_id_767")
         cob_formula = md.get("cob_formula")
-        dtype = md.get("type", "DISCRETE")
+        dtype = md.get("type", "DISCRETE").upper()
         scale = md.get("scale")
         offset = md.get("offset")
         signed = md.get("signed", False)
@@ -270,6 +337,7 @@ def parse_vec_file(path: Path) -> dict[str, Any]:
 
 
 def vec_to_parameters(
-    mapping: dict[str, Any], default_rate: float = 1.0
+    mapping: dict[str, Any],
+    default_rate: float = 1.0,
 ) -> dict[str, Parameter]:
     return vec_to_parameters_717(mapping, default_rate)
