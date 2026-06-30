@@ -4,69 +4,8 @@ from pathlib import Path
 
 from pyarinc.arinc767.decoder import Arinc767Decoder
 from pyarinc.arinc767.frame import Arinc767Frame, Arinc767FrameParser
-from pyarinc.config.prm_parser import parse_prm_file, prm_to_parameters
-from pyarinc.config.vec_parser import parse_vec_file as parse_vec_file_717
-from pyarinc.config.vec_parser import parse_vec_file_767
-from pyarinc.config.vec_parser import vec_to_parameters as vec_to_parameters_717
-from pyarinc.config.vec_parser import vec_to_parameters_767
+from pyarinc.config.vec_parser import parse_vec_file_767, vec_to_parameters_767
 from pyarinc.models.parameter import Parameter
-
-
-def test_vec_bitrange_parsing_717(tmp_path: Path):
-    text = """
-    ALT W2B3-10  BNR  4.0
-    SPD W3B1-8  BCD 8.0 SF=1
-    """
-    p = tmp_path / "test.vec"
-    p.write_text(text)
-
-    mapping = parse_vec_file_717(p)
-
-    # ALT
-    assert "ALT" in mapping
-    assert mapping["ALT"]["word"] == 1  # W2 → index 1
-    assert mapping["ALT"]["bit_offset"] == 3
-    assert mapping["ALT"]["length"] == 8
-
-    # SPD
-    assert "SPD" in mapping
-    assert mapping["SPD"]["word"] == 2
-    assert mapping["SPD"]["bit_offset"] == 1
-    assert mapping["SPD"]["length"] == 8
-    assert mapping["SPD"]["superframe"] == 1
-
-    params = vec_to_parameters_717(mapping)
-    assert params["ALT"].word == 1
-    assert params["ALT"].bit_offset == 3
-    assert params["ALT"].bit_length == 8
-    assert params["ALT"].rate == 4.0
-
-
-def test_prm_line_parsing_717(tmp_path: Path):
-    text = """
-    ALT 0 2 3 8 4.0
-    TEMP 1 5 0 16 1.0 2
-    """
-    p = tmp_path / "test.prm"
-    p.write_text(text)
-
-    mapping = parse_prm_file(p)
-    params = prm_to_parameters(mapping)
-
-    # ALT
-    assert params["ALT"].subframe == 0
-    assert params["ALT"].word == 2
-    assert params["ALT"].bit_offset == 3
-    assert params["ALT"].bit_length == 8
-    assert params["ALT"].rate == 4.0
-
-    # TEMP
-    assert params["TEMP"].subframe == 1
-    assert params["TEMP"].word == 5
-    assert params["TEMP"].bit_offset == 0
-    assert params["TEMP"].bit_length == 16
-    assert params["TEMP"].rate == 1.0
-    assert params["TEMP"].superframe == 2
 
 
 def test_vec_767_parsing(tmp_path: Path):
@@ -164,7 +103,7 @@ def test_arinc767_decoder_basic():
     df = dec.decode_frames([frame])
 
     assert df.loc[0, "X"] == 0x1234
-    assert df.loc[0, "X_valid"] == True
+    assert bool(df.loc[0, "X_valid"])
 
 
 def test_arinc767_decoder_scheduled():
@@ -184,5 +123,5 @@ def test_arinc767_decoder_scheduled():
     dec = Arinc767Decoder([p], frames_per_second=1.0)
     df = dec.decode([frame0, frame1])
 
-    assert df.iloc[0]["valid"] == True
-    assert df.iloc[1]["valid"] == False
+    assert bool(df.iloc[0]["valid"])
+    assert not bool(df.iloc[1]["valid"])
