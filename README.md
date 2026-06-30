@@ -164,6 +164,32 @@ Both JSON and text formats are supported.
 
 ---
 
+## **VEC Parsing Enhancements**
+
+The VEC parser supports a richer and more consistent token set across ARINC 717
+and ARINC 767, improving configuration clarity while preserving full compatibility
+with existing decoders.
+
+### **ARINC 717**
+- Support for `TYPE=`, `SIGNED=`, `SCALE=`, `OFFSET=`  
+- Recognition of bare type tokens (`BNR`, `BCD`, `CHAR`)  
+- Parsing of `CONV=` and `OPT=` (stored in mapping for future use)  
+- No changes to the `Parameter.from_717` API
+
+### **ARINC 767**
+- Support for bare type tokens (`BNR`, `BCD`, `CHAR`)  
+- Parsing of `SIGNED=`, `SCALE=`, `OFFSET=`  
+- Decimal `FID=` supported; hexadecimal `FID=0xNN` ignored  
+- COB formulas stored without overriding the declared data type  
+- Absolute bit indexing (`start_bit = word * 32 + bit_offset`) retained
+
+### **General**
+- Unified token handling across 717/767  
+- Expanded test coverage for all supported tokens and legacy behaviors  
+- No changes to the public `Parameter` API
+
+---
+
 ## **Workflow**
 
 Typical decoding flow:
