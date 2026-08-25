@@ -1,30 +1,37 @@
 # **pyarinc — ARINC 717 / ARINC 767 decoding library**
 
-`pyarinc` is a modern, typed Python library for decoding ARINC 717 and ARINC 767
-flight‑data recorder formats. It provides deterministic bit‑extraction utilities,
-clean parameter models, PRM/VEC configuration parsing, and end‑to‑end decoding
-into pandas DataFrames.
+`pyarinc` is a modern, typed Python library for decoding ARINC 717 and ARINC 767 flight‑data recorder formats.  
+It provides deterministic bit‑extraction utilities, clean parameter models, PRM/VEC configuration parsing, and end‑to‑end decoding into pandas DataFrames.
 
-The library is designed for analysis pipelines, automated QA tooling, and
-research workflows that require reliable, test‑covered decoding of FDR/QAR data.
+The library is designed for analysis pipelines, automated QA tooling, and research workflows that require reliable, test‑covered decoding of FDR/QAR data.
 
 ---
 
 ## **Installation**
 
-The package is not published on PyPI. Install locally:
-
-### Local install
+### **Standard installation**
 ```
 pip install .
 ```
 
-### Editable install (recommended for development)
+### **Editable installation (recommended for development)**
 ```
 pip install -e .
 ```
 
-### Install with test dependencies
+### **Install optional extras**
+
+#### **I/O support (Parquet, Arrow)**
+```
+pip install -e .[io]
+```
+
+#### **Development tools (pytest, coverage, Arrow)**
+```
+pip install -e .[dev]
+```
+
+#### **Test dependencies only**
 ```
 pip install -e .[test]
 ```
@@ -43,12 +50,12 @@ pytest -vv
 
 Tests cover:
 
-- Bit extraction (717/767, MSB‑first, cross‑byte)
-- Data‑type decoding (BNR, BCD, DISCRETE, PACKED, CHAR/ASCII, UTC, COB)
-- Frame reconstruction (717) and frame parsing (767)
-- Scheduling and superframes
-- PRM/VEC parsing
-- End‑to‑end decoding for both ARINC 717 and ARINC 767
+- Bit extraction (717/767, MSB‑first, cross‑byte)  
+- Data‑type decoding (BNR, BCD, DISCRETE, PACKED, CHAR/ASCII, UTC, COB)  
+- Frame reconstruction (717) and frame parsing (767)  
+- Scheduling and superframes  
+- PRM/VEC parsing  
+- End‑to‑end decoding for both ARINC 717 and ARINC 767  
 
 ---
 
@@ -61,17 +68,19 @@ Tests cover:
 - Decodes BNR, BCD, DISCRETE, PACKED, CHAR/ISO, UTC  
 - Applies rate‑based scheduling and superframe rules  
 - Produces time‑indexed parameter values  
-- Word‑based parameter indexing via:
+- Raw‑byte convenience decoding via `decode_raw_bytes()`  
+- Word‑based parameter indexing:
   - `subframe`
   - `word`
-  - `bit_offset`
-- Absolute bit indexing is *not* used for 717 parameters
+  - `bit_offset`  
+- Absolute bit indexing is **not** used for 717 parameters  
 
 ### **ARINC 767**
 - Frame boundary detection (sync word, header, trailer)  
 - Timestamp extraction with wrap‑around handling  
 - Parameter extraction using **absolute bit indexing** (`start_bit`)  
 - VEC/PRM‑based configuration  
+- Raw‑byte convenience decoding via `decode_raw_bytes()`  
 - Full data‑type support:
   - BNR (signed/unsigned)
   - BCD
@@ -79,33 +88,31 @@ Tests cover:
   - PACKED BITS
   - CHAR / ASCII
   - UTC
-  - COB (Computed On Board) with formula evaluation  
+  - COB (Computed On Board)  
 - Scheduling:
   - Timestamp‑based time axis (primary)
-  - Rate‑based scheduling (fallback, 717‑compatible)
+  - Rate‑based scheduling (fallback, 717‑compatible)  
 - DataFrame output with:
-  - time  
-  - parameter_name  
-  - value  
-  - frame_index  
-  - frame_id  
-  - valid  
+  - `time`
+  - `parameter_name`
+  - `value`
+  - `frame_index`
+  - `frame_id`
+  - `valid`
 
 ---
 
 ## **Parameter Model (717 vs 767)**
 
-`pyarinc` uses a unified `Parameter` class with explicit separation between
-ARINC 717 and ARINC 767 semantics.
+`pyarinc` uses a unified `Parameter` class with explicit separation between ARINC 717 and ARINC 767 semantics.
 
 ### **ARINC 717 parameters**
-- Use **word‑based indexing**:
+- Word‑based indexing:
   - `subframe`
   - `word`
   - `bit_offset`
-- `start_bit` must remain **unset** (`None`)
-- Decoded via `decode_from_frame()`
-- Created using:
+- `start_bit` must remain **unset** (`None`)  
+- Decoded via `decode_from_frame()`  
 
 ```python
 Parameter.from_717(
@@ -119,11 +126,9 @@ Parameter.from_717(
 ```
 
 ### **ARINC 767 parameters**
-- Use **absolute bit indexing**:
-  - `start_bit` (0‑based MSB‑first)
-- Optional `frame_id_767` for multi‑frame configurations
-- Decoded via `decode_raw_from_bytes()`
-- Created using:
+- Absolute bit indexing (`start_bit`)  
+- Optional `frame_id_767` for multi‑frame configurations  
+- Decoded via `decode_raw_from_bytes()`  
 
 ```python
 Parameter.from_767(
@@ -135,15 +140,11 @@ Parameter.from_767(
 )
 ```
 
-This separation eliminates ambiguity and prevents accidental misdecoding.
-
 ---
 
 ## **Configuration Support**
 
-The library parses PRM and VEC formats, including:
-
-### ARINC 717 fields
+### **ARINC 717 fields**
 - subframe index  
 - word index  
 - bit offset  
@@ -152,9 +153,9 @@ The library parses PRM and VEC formats, including:
 - superframe index  
 - scale and offset  
 
-### ARINC 767 fields
-- **start_bit** (absolute bit index)  
-- frame_id_767  
+### **ARINC 767 fields**
+- `start_bit`  
+- `frame_id_767`  
 - bit length  
 - rate  
 - scale and offset  
@@ -166,59 +167,54 @@ Both JSON and text formats are supported.
 
 ## **VEC Parsing Enhancements**
 
-The VEC parser supports a richer and more consistent token set across ARINC 717
-and ARINC 767, improving configuration clarity while preserving full compatibility
-with existing decoders.
-
 ### **ARINC 717**
-- Support for `TYPE=`, `SIGNED=`, `SCALE=`, `OFFSET=`  
-- Recognition of bare type tokens (`BNR`, `BCD`, `CHAR`)  
-- Parsing of `CONV=` and `OPT=` (stored in mapping for future use)  
-- No changes to the `Parameter.from_717` API
+- `TYPE=`, `SIGNED=`, `SCALE=`, `OFFSET=`  
+- Bare type tokens (`BNR`, `BCD`, `CHAR`)  
+- `CONV=` and `OPT=` tokens retained for future use  
 
 ### **ARINC 767**
-- Support for bare type tokens (`BNR`, `BCD`, `CHAR`)  
-- Parsing of `SIGNED=`, `SCALE=`, `OFFSET=`  
-- Decimal `FID=` supported; hexadecimal `FID=0xNN` ignored  
-- COB formulas stored without overriding the declared data type  
-- Absolute bit indexing (`start_bit = word * 32 + bit_offset`) retained
+- Bare type tokens  
+- `SIGNED=`, `SCALE=`, `OFFSET=`  
+- Decimal `FID=` supported  
+- COB formulas stored without overriding declared type  
+- Absolute bit indexing preserved  
 
 ### **General**
 - Unified token handling across 717/767  
-- Expanded test coverage for all supported tokens and legacy behaviors  
-- No changes to the public `Parameter` API
+- Expanded test coverage  
+- No changes to the public `Parameter` API  
 
 ---
 
 ## **Workflow**
 
-Typical decoding flow:
-
 1. Load raw data (aligned, bitstream, or ARINC 767 frames)  
-2. Convert bitstream to aligned frames if needed (717)  
+2. Convert bitstream → aligned frames if needed (717)  
 3. Load PRM or VEC configuration  
 4. Construct parameters using `from_717()` or `from_767()`  
-5. Decode parameters using scheduling and superframe rules  
-6. Produce a pandas DataFrame  
+5. Decode using scheduling and superframe rules  
+6. Export DataFrame to CSV or Parquet  
+
+Reference examples:
+
+- `examples/process_flight.py` (ARINC 717)  
+- `examples/process_flight_767.py` (ARINC 767)
 
 ---
 
 ## **Reference Source**
 
-This project is a clean rewrite inspired by the decoding logic in the original
-FlightDataDecode repository:
+This project is a clean rewrite inspired by:
 
-[https://github.com/osnosn/FlightDataDecode](https://github.com/osnosn/FlightDataDecode)
+<https://github.com/osnosn/FlightDataDecode>
 
-`pyarinc` re‑implements the core logic with a modern architecture, strict typing,
-and full test coverage. No legacy scripts or `.dat` formats are included.
+`pyarinc` re‑implements the core logic with a modern architecture, strict typing, and full test coverage.
 
 ---
 
 ## **Notes**
-
 - No Lua integration  
-- No custom `.dat` format  
-- No print() statements — uses Python logging  
+- No legacy `.dat` formats  
+- No `print()` statements — uses Python logging  
 - Fully typed (Python 3.12+)  
 - Deterministic, testable, modular design  
