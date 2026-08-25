@@ -112,16 +112,16 @@ Tests cover:
   - `word`
   - `bit_offset`
 - `start_bit` must remain **unset** (`None`)  
-- Decoded via `decode_from_frame()`  
 
 ```python
-Parameter.from_717(
+Parameter(
     name="ALT",
-    bit_length=12,
-    data_type="BNR",
     subframe=0,
     word=2,
     bit_offset=4,
+    bit_length=12,
+    data_type="BNR",
+    rate=16,
 )
 ```
 
@@ -204,14 +204,16 @@ Both JSON, text, VEC/PRM, and FRED XML formats are supported.
 1. Load raw data (aligned, bitstream, or ARINC 767 frames)
 2. Convert bitstream → aligned frames if needed (717)
 3. Load PRM, VEC, or ARINC 647A FRED XML configurations
-4. Construct parameters using `from_717()` or `from_767()`
+4. Construct parameters using word indexing (717) or `from_767()` (767)
 5. Decode using scheduling and superframe rules
 6. Export DataFrame to CSV or Parquet
 
 Reference examples:
 
-* `examples/process_flight.py` (ARINC 717)
-* `examples/process_flight_767.py` (ARINC 767)
+* `examples/process_flight_717.py` (ARINC 717 Single Processing)
+* `examples/process_flight_717_batch.py` (ARINC 717 Batch Processing)
+* `examples/process_flight_767.py` (ARINC 767 Processing)
+* `examples/analyze_flight.py` (Telemetry Analysis and Plotting)
 * `examples/parse_fred_example.py` (ARINC 647A FRED XML Parsing)
 
 ---
