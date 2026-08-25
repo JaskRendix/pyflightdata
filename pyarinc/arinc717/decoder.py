@@ -60,13 +60,18 @@ class Arinc717Decoder:
         word_bits: int = 12,
         subframes_per_frame: int = 4,
         words_per_subframe: int = 64,
+        sync_pattern: int = 0x257,
+        sync_length: int = 12,
     ) -> pd.DataFrame:
-        """Refinement D: Public helper to parse raw bytes into an aligned stream and decode them."""
-        aligned_stream = AlignedStream(
-            data,
+        """Parse raw bytes into an aligned stream via bitstream synchronization and decode them."""
+        # Use from_bitstream to correctly convert raw bytes into ArincFrame objects
+        aligned_stream = AlignedStream.from_bitstream(
+            data=data,
+            sync_pattern=sync_pattern,
+            sync_length=sync_length,
             word_bits=word_bits,
-            subframes_per_frame=subframes_per_frame,
             words_per_subframe=words_per_subframe,
+            subframes_per_frame=subframes_per_frame,
         )
         return self.decode(aligned_stream, frames_per_second=frames_per_second)
 
@@ -80,16 +85,27 @@ class Arinc717Decoder:
             for p in self._valid_params
         }
 
-        # Refinement A: Fast-path for trivially scheduled parameters (no superframes, all rates == fps)
+        # Fast-path for trivially scheduled parameters
         is_trivially_scheduled = not self._has_superframes and all(
             p.rate == frames_per_second for p in self._valid_params
         )
 
-        # Refinement C: Fast-path for empty streams/frames
         frames = list(aligned_stream.iter_frames())
-        if frames and all(not getattr(f, "bits", None) for f in frames):
+        if not frames:
             logger.warning(
-                "All ARINC 717 frames contain empty bit sections. Returning invalid scheduled DataFrame."
+                "No ARINC 717 frames found or sync pattern not matched. Returning empty DataFrame."
+            )
+            return pd.DataFrame(
+                columns=[
+                    "time",
+                    "parameter_name",
+                    "value",
+                    "frame_index",
+                    "subframe_index",
+                    "superframe_index",
+                    "bit_offset",
+                    "valid",
+                ]
             )
 
         times: list[float] = []
@@ -103,23 +119,14 @@ class Arinc717Decoder:
 
         for frame_index, frame in enumerate(frames):
             time = frame_index / frames_per_second
-            frame_bits = frame.bits
+            frame_bits = getattr(frame, "bits", None)
             f_idx = getattr(frame, "frame_index", frame_index)
+
+            if frame_bits is None:
+                continue
 
             # Fast-path execution loop
             if is_trivially_scheduled:
-                if not frame_bits:
-                    for p in self._valid_params:
-                        times.append(time)
-                        param_names.append(p.name)
-                        values.append(None)
-                        frame_indices.append(f_idx)
-                        subframe_indices.append(self._subframes[id(p)])
-                        superframe_indices.append(0)
-                        bit_offsets.append(self._bit_offsets[id(p)])
-                        valids.append(False)
-                    continue
-
                 for p in self._valid_params:
                     try:
                         decode_func = self._decode_funcs[id(p)]

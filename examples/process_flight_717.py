@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pandas as pd
-
 from pyarinc.arinc717.aligned import AlignedStream
 from pyarinc.arinc717.decoder import Arinc717Decoder
 from pyarinc.io.csv_export import export_csv
@@ -16,21 +14,22 @@ def process_flight_data(file_path: Path, output_dir: Path) -> None:
     raw_bytes = read_binary(file_path)
 
     # 1. Build the AlignedStream using the bitstream scanner & sync pattern
-    # (Adjust sync_pattern/length and words_per_subframe if your specific file requires it)
     print("Parsing bitstream and finding sync positions...")
     aligned_stream = AlignedStream.from_bitstream(
         data=raw_bytes,
-        sync_pattern=0x247,  # Standard ARINC 717 bipolar sync word example (adjust if needed)
+        sync_pattern=0x247,  # Standard ARINC 717 bipolar sync word example
         sync_length=12,
         word_bits=12,
-        words_per_subframe=64,  # Change to 256 or 64 depending on your fixture layout
+        words_per_subframe=64,
         subframes_per_frame=4,
     )
 
-    # Define sample parameters for demonstration
+    # Define sample parameters for demonstration (expanded with HDG and VS)
     sample_params = [
         Parameter("ALT", start_bit=0, bit_length=12, data_type="BNR", rate=16),
         Parameter("CAS", start_bit=12, bit_length=12, data_type="BNR", rate=16),
+        Parameter("HDG", start_bit=24, bit_length=12, data_type="BNR", rate=16),
+        Parameter("VS", start_bit=36, bit_length=12, data_type="BNR", rate=16),
     ]
 
     print("Decoding parameters using Arinc717Decoder...")
@@ -52,7 +51,7 @@ def process_flight_data(file_path: Path, output_dir: Path) -> None:
 
 
 if __name__ == "__main__":
-    sample_file = Path("tests/fixtures/ags717/010888.vec")
+    sample_file = Path("tests/fixtures/ags717/B-8888_20010102171005-10888.wgl.zip")
     output_directory = Path("output")
 
     if sample_file.exists():
