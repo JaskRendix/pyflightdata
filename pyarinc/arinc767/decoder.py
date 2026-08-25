@@ -7,7 +7,8 @@ from typing import Any
 import pandas as pd
 
 from ..models.parameter import Parameter
-from .frame import Arinc767Frame, Arinc767FrameParser
+from .frame import Arinc767Frame
+from .parser import Arinc767FrameParser
 
 logger = logging.getLogger(__name__)
 

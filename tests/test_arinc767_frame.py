@@ -1,6 +1,6 @@
 import struct
 
-from pyarinc.arinc767.frame import Arinc767FrameParser
+from pyarinc.arinc767.parser import Arinc767FrameParser
 
 
 def build_raw_frame(

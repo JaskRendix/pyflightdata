@@ -1,0 +1,255 @@
+from __future__ import annotations
+
+import logging
+import struct
+from collections.abc import Iterable
+
+from .frame import Arinc767Frame
+
+logger = logging.getLogger(__name__)
+
+
+class Arinc767FrameParser:
+    """Parse ARINC 767 frames from raw byte stream."""
+
+    SYNC_WORD: int = 0xEB90
+    """Sync word constant: 0xEB90 (big-endian)."""
+
+    HEADER_SIZE: int = 10
+    """Frame header size: 2 (sync) + 2 (len) + 4 (timestamp) + 1 (type) + 1 (id)."""
+
+    TRAILER_SIZE: int = 2
+    """Frame trailer size: 1 (type) + 1 (id)."""
+
+    MIN_FRAME_SIZE: int = 14
+    """Minimum frame size: 10 (header) + 2 (trailer) + 2 (min data)."""
+
+    MAX_FRAME_SIZE: int = 2048
+    """Maximum frame size per ARINC 767 specification."""
+
+    @staticmethod
+    def find_sync_positions(data: bytes) -> list[int]:
+        """Find all sync word positions in data (first pass)."""
+        positions = []
+        for i in range(len(data) - 1):
+            word = struct.unpack(">H", data[i : i + 2])[0]
+            if word == Arinc767FrameParser.SYNC_WORD:
+                positions.append(i)
+        return positions
+
+    @staticmethod
+    def _looks_like_frame_start(data: bytes, pos: int) -> bool:
+        """Check whether `pos` is a plausible frame start."""
+        if pos + Arinc767FrameParser.HEADER_SIZE > len(data):
+            return False
+        try:
+            word = struct.unpack(">H", data[pos : pos + 2])[0]
+        except struct.error:
+            return False
+        if word != Arinc767FrameParser.SYNC_WORD:
+            return False
+        try:
+            frame_len = struct.unpack(">H", data[pos + 2 : pos + 4])[0]
+        except struct.error:
+            return False
+        if (
+            frame_len < Arinc767FrameParser.MIN_FRAME_SIZE
+            or frame_len > Arinc767FrameParser.MAX_FRAME_SIZE
+        ):
+            return False
+        if pos + frame_len > len(data):
+            return False
+        return True
+
+    @staticmethod
+    def find_valid_frame_start(data: bytes, start_pos: int) -> tuple[int, int] | None:
+        """Find next valid frame starting at or after start_pos."""
+        for pos in range(start_pos, len(data) - Arinc767FrameParser.HEADER_SIZE):
+            word = struct.unpack(">H", data[pos : pos + 2])[0]
+            if word != Arinc767FrameParser.SYNC_WORD:
+                continue
+
+            try:
+                frame_len = struct.unpack(">H", data[pos + 2 : pos + 4])[0]
+            except struct.error:
+                continue
+
+            if (
+                frame_len < Arinc767FrameParser.MIN_FRAME_SIZE
+                or frame_len > Arinc767FrameParser.MAX_FRAME_SIZE
+            ):
+                continue
+
+            if pos + frame_len > len(data):
+                continue
+
+            return (pos, frame_len)
+
+        return None
+
+    @staticmethod
+    def parse_frame(
+        data: bytes, frame_start: int, frame_index: int, strict: bool = False
+    ) -> Arinc767Frame | None:
+        """Parse a single frame starting at frame_start byte offset."""
+        if frame_start + Arinc767FrameParser.HEADER_SIZE > len(data):
+            logger.debug(
+                f"Frame {frame_index}: not enough data for header at offset {frame_start:#x}"
+            )
+            return None
+
+        try:
+            sync = struct.unpack(">H", data[frame_start : frame_start + 2])[0]
+        except struct.error:
+            logger.debug(
+                f"Frame {frame_index}: failed to read sync at offset {frame_start:#x}"
+            )
+            return None
+
+        if sync != Arinc767FrameParser.SYNC_WORD:
+            logger.debug(
+                f"Frame {frame_index}: sync mismatch (expected 0x{Arinc767FrameParser.SYNC_WORD:04x}, got 0x{sync:04x})"
+            )
+            return None
+
+        try:
+            frame_len = struct.unpack(">H", data[frame_start + 2 : frame_start + 4])[0]
+        except struct.error:
+            logger.debug(
+                f"Frame {frame_index}: failed to read frame length at offset {frame_start:#x}"
+            )
+            return None
+
+        if (
+            frame_len < Arinc767FrameParser.MIN_FRAME_SIZE
+            or frame_len > Arinc767FrameParser.MAX_FRAME_SIZE
+        ):
+            logger.debug(
+                f"Frame {frame_index}: invalid length {frame_len} (expected 14-2048) at offset {frame_start:#x}"
+            )
+            return None
+
+        if frame_start + frame_len > len(data):
+            logger.debug(
+                f"Frame {frame_index}: frame extends beyond buffer "
+                f"(start={frame_start:#x}, len={frame_len}, buf_len={len(data)})"
+            )
+            return None
+
+        try:
+            timestamp_ms = struct.unpack(">I", data[frame_start + 4 : frame_start + 8])[
+                0
+            ]
+        except struct.error:
+            logger.debug(
+                f"Frame {frame_index}: failed to read timestamp at offset {frame_start:#x}"
+            )
+            return None
+
+        try:
+            frame_type_id = struct.unpack(
+                ">H", data[frame_start + 8 : frame_start + 10]
+            )[0]
+        except struct.error:
+            logger.debug(
+                f"Frame {frame_index}: failed to read frame type/id at offset {frame_start:#x}"
+            )
+            return None
+
+        frame_type = (frame_type_id >> 8) & 0xFF
+        frame_id = frame_type_id & 0xFF
+
+        frame_bytes = data[frame_start : frame_start + frame_len]
+
+        frame = Arinc767Frame(
+            raw_bytes=frame_bytes,
+            frame_index=frame_index,
+            frame_id=frame_id,
+            frame_type=frame_type,
+            timestamp_ms=timestamp_ms,
+        )
+
+        if not frame.is_valid():
+            logger.debug(
+                f"Frame {frame_index}: frame too small at offset {frame_start:#x}"
+            )
+            return None
+
+        if not frame.validate_trailer():
+            if strict:
+                logger.debug(
+                    f"Frame {frame_index}: trailer mismatch (strict mode) at offset {frame_start:#x}"
+                )
+                return None
+            logger.warning(
+                f"Frame {frame_index}: trailer type/id mismatch "
+                f"(header: type=0x{frame_type:02x}, id=0x{frame_id:02x}) at offset {frame_start:#x}"
+            )
+
+        logger.debug(
+            f"Frame {frame_index}: parsed successfully at offset {frame_start:#x} (len={frame_len})"
+        )
+        return frame
+
+    @staticmethod
+    def iter_frames(
+        data: bytes, strict: bool = False, timestamp_wrap: bool = False
+    ) -> Iterable[Arinc767Frame]:
+        """Iterate over all valid frames in a byte buffer."""
+        pos = 0
+        frame_index = 0
+        gap_logged = False
+        last_timestamp = None
+        cumulative_offset = 0
+
+        while pos < len(data):
+            result = Arinc767FrameParser.find_valid_frame_start(data, pos)
+            if result is None:
+                if pos < len(data) and not gap_logged:
+                    remaining = len(data) - pos
+                    logger.debug(
+                        f"End of frame stream: {remaining} bytes remaining at offset {pos:#x}"
+                    )
+                    gap_logged = True
+                break
+
+            frame_start, frame_len = result
+
+            if frame_start > pos and not gap_logged:
+                gap_size = frame_start - pos
+                logger.warning(
+                    f"Frame {frame_index}: gap of {gap_size} bytes before frame at offset {frame_start:#x}"
+                )
+
+            inner_sync = None
+            end_search = min(frame_start + frame_len, len(data) - 1)
+            for i in range(frame_start + 1, end_search):
+                if Arinc767FrameParser._looks_like_frame_start(data, i):
+                    inner_sync = i
+                    break
+
+            if inner_sync is not None:
+                logger.warning(
+                    f"Frame {frame_index}: embedded frame header detected at "
+                    f"{inner_sync:#x} inside frame starting at {frame_start:#x}; "
+                    f"resuming parse from inner frame"
+                )
+                pos = inner_sync
+                continue
+
+            frame = Arinc767FrameParser.parse_frame(
+                data, frame_start, frame_index, strict=strict
+            )
+            if frame is not None:
+                if timestamp_wrap:
+                    ts = frame.timestamp_ms
+                    if last_timestamp is not None and ts < last_timestamp:
+                        cumulative_offset += 24 * 3600 * 1000
+                    ts_adj = ts + cumulative_offset
+                    frame.timestamp_ms = ts_adj
+                    last_timestamp = ts_adj
+
+                yield frame
+                frame_index += 1
+
+            pos = frame_start + frame_len

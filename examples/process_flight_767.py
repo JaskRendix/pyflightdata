@@ -1,9 +1,6 @@
 from pathlib import Path
 
-import pandas as pd
-
 from pyarinc.arinc767.decoder import Arinc767Decoder
-from pyarinc.arinc767.frame import Arinc767FrameParser
 from pyarinc.io.csv_export import export_csv
 from pyarinc.io.datafile import read_binary
 from pyarinc.io.parquet_export import export_parquet

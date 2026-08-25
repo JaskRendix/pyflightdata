@@ -3,7 +3,8 @@ import struct
 import pandas as pd
 
 from pyarinc.arinc767.decoder import Arinc767Decoder
-from pyarinc.arinc767.frame import Arinc767Frame, Arinc767FrameParser
+from pyarinc.arinc767.frame import Arinc767Frame
+from pyarinc.arinc767.parser import Arinc767FrameParser
 from pyarinc.models.parameter import Parameter
 
 
