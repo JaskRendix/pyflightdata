@@ -1,7 +1,7 @@
-# **pyarinc — ARINC 717 / ARINC 747 / ARINC 767 decoding library**
+# **pyarinc — ARINC 717 / ARINC 767 decoding library**
 
-`pyarinc` is a modern, typed Python library for decoding ARINC 717, ARINC 747, and ARINC 767 flight‑data recorder formats.  
-It provides deterministic bit‑extraction utilities, clean parameter models, PRM/VEC/FRED configuration parsing, and end‑to‑end decoding into pandas DataFrames.
+`pyarinc` is a modern, typed Python library for decoding ARINC 717 and ARINC 767 flight‑data recorder formats.  
+It provides deterministic bit‑extraction utilities, clean parameter models, PRM/VEC configuration parsing, ARINC 647A (FRED) XML support, and end‑to‑end decoding into pandas DataFrames.
 
 The library is designed for analysis pipelines, automated QA tooling, and research workflows that require reliable, test‑covered decoding of FDR/QAR data.
 
