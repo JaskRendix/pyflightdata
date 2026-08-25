@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 from ..models.parameter import Parameter
+
+logger = logging.getLogger(__name__)
 
 _VEC_BITRANGE_RE_717 = re.compile(
     r"W\s*(?P<word>\d+)\s*B\s*(?P<bstart>\d+)(?:-(?P<bend>\d+))?",
@@ -23,112 +26,108 @@ def _parse_bitrange_717(token: str) -> dict[str, int] | None:
     bend_i = int(bend) if bend is not None else bstart
     length = bend_i - bstart + 1
     return {
-        "word": word - 1,  # 717 uses 12‑bit aligned words → 0‑based
+        "word": word - 1,  # 717 uses 12-bit aligned words -> 0-based
         "bit_offset": bstart,
         "length": length,
     }
 
 
 def parse_vec_file_717(path: Path) -> dict[str, Any]:
-    """ARINC 717 VEC parser with Phase‑3 token support."""
+    """ARINC 717 VEC parser with single-pass token scanning."""
     out: dict[str, Any] = {}
-    text = path.read_text(encoding="utf-8").strip()
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        logger.error(f"Failed to read VEC file 717 {path}: {e}")
+        raise
 
     # JSON shortcut
     try:
         data = json.loads(text)
         if isinstance(data, dict):
             return data
-    except Exception:
+    except json.JSONDecodeError:
         pass
 
-    for line in text.splitlines():
+    for line_num, line in enumerate(text.splitlines(), start=1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
 
         parts = line.split()
-        name = parts[0]
-        entry: dict[str, Any] = {}
+        if not parts:
+            continue
 
-        # bitrange
+        name = parts[0]
+        entry: dict[str, Any] = {"subframe": 0}
+        options = []
+
+        # Bitrange extraction (typically found early in parts)
         for tok in parts[1:6]:
             br = _parse_bitrange_717(tok)
             if br:
                 entry.update(br)
                 break
 
-        # rate (last numeric token)
+        # Rate extraction (fallback to scanning for float tokens)
         for tok in reversed(parts):
             try:
                 entry["rate"] = float(tok)
                 break
-            except Exception:
+            except ValueError:
+                continue
+        entry.setdefault("rate", 1.0)
+
+        # Single-pass keyword and token parsing
+        for tok in parts[1:]:
+            upper_tok = tok.upper()
+
+            # Bare type tokens
+            if upper_tok in ("BNR", "BCD", "CHAR"):
+                entry["type"] = upper_tok
                 continue
 
-        # superframe
-        for tok in parts:
-            if tok.upper().startswith("SF="):
+            if "=" not in tok:
+                continue
+
+            key, val = tok.split("=", 1)
+            key = key.strip().upper()
+            val = val.strip()
+
+            if key == "SF":
                 try:
-                    entry["superframe"] = int(tok.split("=")[1])
+                    entry["superframe"] = int(val)
+                except ValueError:
+                    pass
+            elif key == "TYPE":
+                entry["type"] = val.upper()
+            elif key == "SIGNED":
+                entry["signed"] = val.lower() == "true"
+            elif key == "SCALE":
+                try:
+                    entry["scale"] = float(val)
+                except ValueError:
+                    pass
+            elif key == "OFFSET":
+                try:
+                    entry["offset"] = float(val)
+                except ValueError:
+                    pass
+            elif key == "CONV":
+                try:
+                    entry["conv"] = int(val)
+                except ValueError:
+                    pass
+            elif key == "OPT":
+                try:
+                    opt_val, txt = val.split(":", 1)
+                    options.append((int(opt_val), txt))
                 except Exception:
                     pass
 
-        # TYPE=
-        for tok in parts:
-            if tok.upper().startswith("TYPE="):
-                entry["type"] = tok.split("=", 1)[1].upper()
-
-        # bare type tokens (BNR, BCD, CHAR)
-        for tok in parts:
-            upper = tok.upper()
-            if upper in ("BNR", "BCD", "CHAR"):
-                entry["type"] = upper
-
-        # SIGNED=
-        for tok in parts:
-            if tok.upper().startswith("SIGNED="):
-                entry["signed"] = tok.split("=", 1)[1].lower() == "true"
-
-        # SCALE=
-        for tok in parts:
-            if tok.upper().startswith("SCALE="):
-                try:
-                    entry["scale"] = float(tok.split("=", 1)[1])
-                except Exception:
-                    pass
-
-        # OFFSET=
-        for tok in parts:
-            if tok.upper().startswith("OFFSET="):
-                try:
-                    entry["offset"] = float(tok.split("=", 1)[1])
-                except Exception:
-                    pass
-
-        # CONV=  (BCD/CHAR digit width)
-        for tok in parts:
-            if tok.upper().startswith("CONV="):
-                try:
-                    entry["conv"] = int(tok.split("=", 1)[1])
-                except Exception:
-                    pass
-
-        # OPT=  (DISCRETE enumerations)
-        # Format: OPT=1:ON or OPT=0:OFF
-        options = []
-        for tok in parts:
-            if tok.upper().startswith("OPT="):
-                try:
-                    raw = tok.split("=", 1)[1]
-                    val, txt = raw.split(":", 1)
-                    options.append((int(val), txt))
-                except Exception:
-                    pass
         if options:
             entry["options"] = options
 
-        entry.setdefault("subframe", 0)
         out[name] = entry
 
     return out
@@ -138,7 +137,7 @@ def vec_to_parameters_717(
     mapping: dict[str, Any],
     default_rate: float = 1.0,
 ) -> dict[str, Parameter]:
-    """Convert ARINC 717 VEC mapping to Parameter objects (Phase‑3)."""
+    """Convert ARINC 717 VEC mapping to Parameter objects."""
     out: dict[str, Parameter] = {}
 
     for name, md in mapping.items():
@@ -153,8 +152,6 @@ def vec_to_parameters_717(
         scale = md.get("scale")
         offset = md.get("offset")
         signed = md.get("signed", False)
-        # conv = md.get("conv")
-        # options = md.get("options")
 
         p = Parameter.from_717(
             name=name,
@@ -200,91 +197,91 @@ def _parse_bitrange_767(token: str) -> dict[str, int] | None:
 
 
 def parse_vec_file_767(path: Path) -> dict[str, Any]:
-    """ARINC 767 VEC parser."""
-    text = path.read_text(encoding="utf-8").strip()
+    """ARINC 767 VEC parser with improved hex FID and single-pass token parsing."""
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        logger.error(f"Failed to read VEC file 767 {path}: {e}")
+        raise
 
     # JSON shortcut
     try:
         data = json.loads(text)
         if isinstance(data, dict):
             return data
-    except Exception:
+    except json.JSONDecodeError:
         pass
 
     out: dict[str, Any] = {}
 
-    for line in text.splitlines():
+    for line_num, line in enumerate(text.splitlines(), start=1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
 
         parts = line.split()
+        if not parts:
+            continue
+
         name = parts[0]
         entry: dict[str, Any] = {
             "frame_id_767": None,
             "cob_formula": None,
+            "rate": 1.0,
         }
 
-        # bitrange
+        # Bitrange extraction
         for tok in parts[1:]:
             br = _parse_bitrange_767(tok)
             if br:
                 entry.update(br)
                 break
 
-        # rate
+        # Rate extraction fallback
         for tok in reversed(parts):
             try:
                 entry["rate"] = float(tok)
                 break
-            except Exception:
+            except ValueError:
                 continue
-        entry.setdefault("rate", 1.0)
 
-        # FID= (current implementation: decimal only, hex ignored)
-        for tok in parts:
-            if tok.upper().startswith("FID="):
+        # Single-pass token processing
+        for tok in parts[1:]:
+            upper_tok = tok.upper()
+            if upper_tok in ("BNR", "BCD", "CHAR"):
+                entry["type"] = upper_tok
+                continue
+
+            if "=" not in tok:
+                continue
+
+            key, val = tok.split("=", 1)
+            key = key.strip().upper()
+            val = val.strip()
+
+            if key == "FID":
                 try:
-                    entry["frame_id_767"] = int(tok.split("=")[1])
-                except Exception:
+                    # Support both decimal and hex (e.g. FID=0x0F)
+                    base = 16 if val.lower().startswith("0x") else 10
+                    entry["frame_id_767"] = int(val, base)
+                except ValueError:
                     pass
-
-        # COB=
-        for tok in parts:
-            if tok.upper().startswith("COB="):
-                entry["cob_formula"] = tok.split("=", 1)[1]
-
-        # TYPE=
-        for tok in parts:
-            if tok.upper().startswith("TYPE="):
-                entry["type"] = tok.split("=", 1)[1].upper()
-
-        # bare type tokens (BNR, BCD, CHAR)
-        for tok in parts:
-            upper = tok.upper()
-            if upper in ("BNR", "BCD", "CHAR"):
-                entry["type"] = upper
-
-        # SCALE=
-        for tok in parts:
-            if tok.upper().startswith("SCALE="):
+            elif key == "COB":
+                entry["cob_formula"] = val
+            elif key == "TYPE":
+                entry["type"] = val.upper()
+            elif key == "SCALE":
                 try:
-                    entry["scale"] = float(tok.split("=", 1)[1])
-                except Exception:
+                    entry["scale"] = float(val)
+                except ValueError:
                     pass
-
-        # OFFSET=
-        for tok in parts:
-            if tok.upper().startswith("OFFSET="):
+            elif key == "OFFSET":
                 try:
-                    entry["offset"] = float(tok.split("=", 1)[1])
-                except Exception:
+                    entry["offset"] = float(val)
+                except ValueError:
                     pass
-
-        # SIGNED=
-        for tok in parts:
-            if tok.upper().startswith("SIGNED="):
-                entry["signed"] = tok.split("=", 1)[1].lower() == "true"
+            elif key == "SIGNED":
+                entry["signed"] = val.lower() == "true"
 
         out[name] = entry
 
@@ -311,7 +308,6 @@ def vec_to_parameters_767(
         offset = md.get("offset")
         signed = md.get("signed", False)
 
-        # ARINC 767 absolute bit indexing inside frame data section
         start_bit = word * 32 + bit_offset
 
         p = Parameter.from_767(

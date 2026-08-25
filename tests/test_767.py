@@ -148,9 +148,9 @@ def test_vec_parser_767_tokens_and_hex_fid(tmp_path: Path) -> None:
     assert mapping["PARAM1"]["bit_offset"] == 0
     assert mapping["PARAM1"]["length"] == 16
 
-    # PARAM2: hex FID is NOT parsed by current implementation (expected None)
+    # PARAM2: hex FID is now successfully parsed as 3
     assert "PARAM2" in mapping
-    assert mapping["PARAM2"].get("frame_id_767") is None
+    assert mapping["PARAM2"].get("frame_id_767") == 3
 
     # Convert to Parameter objects
     params = vec_to_parameters_767(mapping)
@@ -159,15 +159,13 @@ def test_vec_parser_767_tokens_and_hex_fid(tmp_path: Path) -> None:
     p1 = params["PARAM1"]
     assert p1.start_bit == 0 * 32 + 0
     assert p1.bit_length == 16
-    # data_type currently defaults to DISCRETE in converter
     assert p1.data_type == "DISCRETE"
     assert p1.cob_formula == "raw*0.00390625"
 
     p2 = params["PARAM2"]
     assert p2.start_bit == 1 * 32 + 4
     assert p2.bit_length == 12
-    # hex FID not parsed → frame_id_767 remains None on Parameter
-    assert p2.frame_id_767 is None
+    assert p2.frame_id_767 == 3
 
     p3 = params["PARAM3"]
     assert p3.start_bit == 2 * 32 + 0
@@ -217,16 +215,16 @@ def test_vec_767_scale_offset(tmp_path: Path):
     assert params["ALT"].offset == 100
 
 
-def test_vec_767_hex_fid_ignored(tmp_path: Path):
+def test_vec_767_hex_fid_parsed(tmp_path: Path):
     text = "ALT W0B0-7 TYPE=BNR FID=0x03 1.0"
     p = tmp_path / "test.vec"
     p.write_text(text)
 
     mapping = parse_vec_file_767(p)
-    assert mapping["ALT"].get("frame_id_767") is None
+    assert mapping["ALT"].get("frame_id_767") == 3
 
     params = vec_to_parameters_767(mapping)
-    assert params["ALT"].frame_id_767 is None
+    assert params["ALT"].frame_id_767 == 3
 
 
 def test_vec_767_no_unsupported_kwargs(tmp_path: Path):
