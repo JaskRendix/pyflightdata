@@ -95,18 +95,20 @@ class Arinc767Decoder:
 
         return pd.DataFrame(rows)
 
-    def decode_raw_bytes(self, data: bytes) -> pd.DataFrame:
+    def decode_raw_bytes(self, data: bytes, **kwargs: Any) -> pd.DataFrame:
         """Public helper to parse raw bytes into frames and decode them."""
-        frames = Arinc767FrameParser.iter_frames(data)
+        frames = Arinc767FrameParser.iter_frames(data, **kwargs)
         return self.decode(frames)
 
-    def decode(self, data: bytes | Iterable[Arinc767Frame]) -> pd.DataFrame:
+    def decode(
+        self, data: bytes | Iterable[Arinc767Frame], **kwargs: Any
+    ) -> pd.DataFrame:
         """Decode raw bytes or frames into a scheduled, long-format DataFrame."""
         fps = self.frames_per_second
 
-        # Case 1: raw bytes → parse frames via helper
+        # Case 1: raw bytes → parse frames via helper (passing down kwargs)
         if isinstance(data, (bytes, bytearray)):
-            frames = list(Arinc767FrameParser.iter_frames(data))
+            frames = list(Arinc767FrameParser.iter_frames(data, **kwargs))
         else:
             frames = list(data)
 
