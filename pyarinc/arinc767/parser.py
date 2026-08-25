@@ -8,6 +8,9 @@ from .frame import Arinc767Frame
 
 logger = logging.getLogger(__name__)
 
+_STRUCT_U16 = struct.Struct(">H")
+_STRUCT_U32 = struct.Struct(">I")
+
 
 class Arinc767FrameParser:
     """Parse ARINC 767 frames from raw byte stream."""
@@ -32,7 +35,7 @@ class Arinc767FrameParser:
         """Find all sync word positions in data (first pass)."""
         positions = []
         for i in range(len(data) - 1):
-            word = struct.unpack(">H", data[i : i + 2])[0]
+            word = _STRUCT_U16.unpack(data[i : i + 2])[0]
             if word == Arinc767FrameParser.SYNC_WORD:
                 positions.append(i)
         return positions
@@ -43,13 +46,13 @@ class Arinc767FrameParser:
         if pos + Arinc767FrameParser.HEADER_SIZE > len(data):
             return False
         try:
-            word = struct.unpack(">H", data[pos : pos + 2])[0]
+            word = _STRUCT_U16.unpack(data[pos : pos + 2])[0]
         except struct.error:
             return False
         if word != Arinc767FrameParser.SYNC_WORD:
             return False
         try:
-            frame_len = struct.unpack(">H", data[pos + 2 : pos + 4])[0]
+            frame_len = _STRUCT_U16.unpack(data[pos + 2 : pos + 4])[0]
         except struct.error:
             return False
         if (
@@ -65,12 +68,12 @@ class Arinc767FrameParser:
     def find_valid_frame_start(data: bytes, start_pos: int) -> tuple[int, int] | None:
         """Find next valid frame starting at or after start_pos."""
         for pos in range(start_pos, len(data) - Arinc767FrameParser.HEADER_SIZE):
-            word = struct.unpack(">H", data[pos : pos + 2])[0]
+            word = _STRUCT_U16.unpack(data[pos : pos + 2])[0]
             if word != Arinc767FrameParser.SYNC_WORD:
                 continue
 
             try:
-                frame_len = struct.unpack(">H", data[pos + 2 : pos + 4])[0]
+                frame_len = _STRUCT_U16.unpack(data[pos + 2 : pos + 4])[0]
             except struct.error:
                 continue
 
@@ -99,7 +102,7 @@ class Arinc767FrameParser:
             return None
 
         try:
-            sync = struct.unpack(">H", data[frame_start : frame_start + 2])[0]
+            sync = _STRUCT_U16.unpack(data[frame_start : frame_start + 2])[0]
         except struct.error:
             logger.debug(
                 f"Frame {frame_index}: failed to read sync at offset {frame_start:#x}"
@@ -113,7 +116,7 @@ class Arinc767FrameParser:
             return None
 
         try:
-            frame_len = struct.unpack(">H", data[frame_start + 2 : frame_start + 4])[0]
+            frame_len = _STRUCT_U16.unpack(data[frame_start + 2 : frame_start + 4])[0]
         except struct.error:
             logger.debug(
                 f"Frame {frame_index}: failed to read frame length at offset {frame_start:#x}"
@@ -129,6 +132,16 @@ class Arinc767FrameParser:
             )
             return None
 
+        if strict and frame_len != (
+            Arinc767FrameParser.HEADER_SIZE
+            + Arinc767FrameParser.TRAILER_SIZE
+            + len(data[frame_start + 10 : frame_start + frame_len - 2])
+        ):
+            logger.debug(
+                f"Frame {frame_index}: strict length match failure at offset {frame_start:#x}"
+            )
+            return None
+
         if frame_start + frame_len > len(data):
             logger.debug(
                 f"Frame {frame_index}: frame extends beyond buffer "
@@ -137,7 +150,7 @@ class Arinc767FrameParser:
             return None
 
         try:
-            timestamp_ms = struct.unpack(">I", data[frame_start + 4 : frame_start + 8])[
+            timestamp_ms = _STRUCT_U32.unpack(data[frame_start + 4 : frame_start + 8])[
                 0
             ]
         except struct.error:
@@ -147,8 +160,8 @@ class Arinc767FrameParser:
             return None
 
         try:
-            frame_type_id = struct.unpack(
-                ">H", data[frame_start + 8 : frame_start + 10]
+            frame_type_id = _STRUCT_U16.unpack(
+                data[frame_start + 8 : frame_start + 10]
             )[0]
         except struct.error:
             logger.debug(
@@ -193,33 +206,53 @@ class Arinc767FrameParser:
 
     @staticmethod
     def iter_frames(
-        data: bytes, strict: bool = False, timestamp_wrap: bool = False
+        data: bytes,
+        strict: bool = False,
+        timestamp_wrap: bool = False,
+        max_gap: int | None = None,
+        max_frames: int = 500000,
     ) -> Iterable[Arinc767Frame]:
         """Iterate over all valid frames in a byte buffer."""
+        # Fast path check for sync word presence
+        if b"\xEB\x90" not in data:
+            logger.debug("No ARINC 767 sync word (0xEB90) found in data stream.")
+            return
+
         pos = 0
         frame_index = 0
-        gap_logged = False
+        last_gap_pos = None
         last_timestamp = None
         cumulative_offset = 0
 
-        while pos < len(data):
+        while pos < len(data) and frame_index < max_frames:
             result = Arinc767FrameParser.find_valid_frame_start(data, pos)
             if result is None:
-                if pos < len(data) and not gap_logged:
+                if pos < len(data):
                     remaining = len(data) - pos
                     logger.debug(
                         f"End of frame stream: {remaining} bytes remaining at offset {pos:#x}"
                     )
-                    gap_logged = True
                 break
 
             frame_start, frame_len = result
 
-            if frame_start > pos and not gap_logged:
+            # Gap tracking & threshold enforcement
+            if frame_start > pos:
                 gap_size = frame_start - pos
-                logger.warning(
-                    f"Frame {frame_index}: gap of {gap_size} bytes before frame at offset {frame_start:#x}"
-                )
+                if strict:
+                    logger.debug(
+                        f"Strict mode: gap of {gap_size} bytes rejected at offset {frame_start:#x}"
+                    )
+                    return
+                if max_gap is not None and gap_size > max_gap:
+                    logger.warning(
+                        f"Large gap detected: {gap_size} bytes exceeds max_gap threshold ({max_gap}) at {frame_start:#x}"
+                    )
+                if frame_start != last_gap_pos:
+                    logger.warning(
+                        f"Frame {frame_index}: gap of {gap_size} bytes before frame at offset {frame_start:#x}"
+                    )
+                    last_gap_pos = frame_start
 
             inner_sync = None
             end_search = min(frame_start + frame_len, len(data) - 1)
@@ -241,15 +274,42 @@ class Arinc767FrameParser:
                 data, frame_start, frame_index, strict=strict
             )
             if frame is not None:
+                ts = frame.timestamp_ms
                 if timestamp_wrap:
-                    ts = frame.timestamp_ms
                     if last_timestamp is not None and ts < last_timestamp:
                         cumulative_offset += 24 * 3600 * 1000
                     ts_adj = ts + cumulative_offset
                     frame.timestamp_ms = ts_adj
                     last_timestamp = ts_adj
+                else:
+                    if last_timestamp is not None and ts < last_timestamp:
+                        logger.warning(
+                            f"Frame {frame_index}: timestamp regression detected ({ts} < {last_timestamp})"
+                        )
+                    last_timestamp = ts
 
                 yield frame
                 frame_index += 1
 
             pos = frame_start + frame_len
+
+        if frame_index >= max_frames:
+            logger.warning(
+                f"Maximum frame limit ({max_frames}) reached during parsing."
+            )
+
+    @staticmethod
+    def parse_all(data: bytes, **kwargs) -> list[Arinc767Frame]:
+        """Convenience wrapper to parse all frames into a list."""
+        return list(Arinc767FrameParser.iter_frames(data, **kwargs))
+
+    @staticmethod
+    def summarize(frame: Arinc767Frame) -> str:
+        """Return a compact human-readable summary of a frame for debugging."""
+        return (
+            f"idx={frame.frame_index}, "
+            f"id=0x{frame.frame_id:02x}, "
+            f"type=0x{frame.frame_type:02x}, "
+            f"ts={frame.timestamp_ms}ms ({frame.timestamp_str}), "
+            f"len={len(frame.raw_bytes)}"
+        )
