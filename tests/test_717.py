@@ -3,8 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pyarinc.config.prm_parser import parse_prm_file, prm_to_parameters
-from pyarinc.config.vec_parser import parse_vec_file as parse_vec_file_717
-from pyarinc.config.vec_parser import vec_to_parameters as vec_to_parameters_717
+from pyarinc.config.vec_parser import parse_vec_file_717, vec_to_parameters_717
 
 
 def test_vec_bitrange_parsing_717(tmp_path: Path):

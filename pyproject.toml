@@ -19,6 +19,14 @@ test = [
     "pytest",
     "pytest-cov",
 ]
+io = [
+    "pyarrow",
+]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pyarrow",
+]
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]

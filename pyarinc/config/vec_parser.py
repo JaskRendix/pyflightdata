@@ -328,10 +328,6 @@ def vec_to_parameters_767(
     return out
 
 
-def parse_vec_file(path: Path) -> dict[str, Any]:
-    return parse_vec_file_717(path)
-
-
 def vec_to_parameters(
     mapping: dict[str, Any],
     default_rate: float = 1.0,

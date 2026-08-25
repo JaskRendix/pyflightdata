@@ -1,92 +1,212 @@
+from __future__ import annotations
+
+import logging
 from collections.abc import Iterable
 from typing import Any
 
 import pandas as pd
 
 from ..models.parameter import Parameter
+from .aligned import AlignedStream
 from .frame import Frame
+
+logger = logging.getLogger(__name__)
 
 
 class Arinc717Decoder:
     """Decode ARINC 717 frames into a pandas DataFrame.
 
     The decoder receives `Frame` objects produced by `AlignedStream` and
-    decodes parameters by delegating to `Parameter.decode_from_bytes`.
+    decodes parameters by delegating to `Parameter.decode_from_frame`.
     Decoded rows include frame metadata required for scheduling.
     """
 
     def __init__(self, params: Iterable[Parameter]):
         self.params = list(params)
 
+        # Pre-filter valid parameters
+        self._valid_params = [
+            p for p in self.params if p.rate is not None and p.rate > 0
+        ]
+
+        # Cache bound decode functions per parameter using id(p)
+        self._decode_funcs = {id(p): p.decode_from_frame for p in self._valid_params}
+
+        # Cache superframe, subframe, and attribute lookups using id(p)
+        self._superframe_counts = {
+            id(p): getattr(p, "superframe_group_count", 1) for p in self._valid_params
+        }
+        self._superframes = {
+            id(p): getattr(p, "superframe", None) for p in self._valid_params
+        }
+        self._subframes = {
+            id(p): getattr(p, "subframe", None) for p in self._valid_params
+        }
+        self._bit_offsets = {
+            id(p): getattr(p, "bit_offset", 0) for p in self._valid_params
+        }
+
+        # Refinement A (Part 1): Check if parameters are trivially scheduled (no superframes, rates match fps assuming 16fps default or custom)
+        # We can dynamically evaluate trivial scheduling during decode() when fps is known,
+        # but we can cache whether any superframes exist upfront:
+        self._has_superframes = any(
+            self._superframes[id(p)] is not None for p in self._valid_params
+        )
+
+    def decode_raw_bytes(
+        self,
+        data: bytes,
+        frames_per_second: int = 16,
+        word_bits: int = 12,
+        subframes_per_frame: int = 4,
+        words_per_subframe: int = 64,
+    ) -> pd.DataFrame:
+        """Refinement D: Public helper to parse raw bytes into an aligned stream and decode them."""
+        aligned_stream = AlignedStream(
+            data,
+            word_bits=word_bits,
+            subframes_per_frame=subframes_per_frame,
+            words_per_subframe=words_per_subframe,
+        )
+        return self.decode(aligned_stream, frames_per_second=frames_per_second)
+
     def decode(self, aligned_stream, frames_per_second: int = 16) -> pd.DataFrame:
-        rows: list[dict[str, Any]] = []
         words_per_subframe = aligned_stream.words_per_subframe
         word_bits = aligned_stream.word_bits
 
-        for frame in aligned_stream.iter_frames():
-            frame_index = frame.frame_index
-            time = frame_index / frames_per_second
+        # Cache interval_frames per parameter based on frames_per_second using id(p)
+        interval_frames_map = {
+            id(p): max(1, int(round(frames_per_second / p.rate)))
+            for p in self._valid_params
+        }
 
-            for p in self.params:
-                if p.rate <= 0:
+        # Refinement A: Fast-path for trivially scheduled parameters (no superframes, all rates == fps)
+        is_trivially_scheduled = not self._has_superframes and all(
+            p.rate == frames_per_second for p in self._valid_params
+        )
+
+        # Refinement C: Fast-path for empty streams/frames
+        frames = list(aligned_stream.iter_frames())
+        if frames and all(not getattr(f, "bits", None) for f in frames):
+            logger.warning(
+                "All ARINC 717 frames contain empty bit sections. Returning invalid scheduled DataFrame."
+            )
+
+        times: list[float] = []
+        param_names: list[str] = []
+        values: list[Any] = []
+        frame_indices: list[int] = []
+        subframe_indices: list[Any] = []
+        superframe_indices: list[Any] = []
+        bit_offsets: list[Any] = []
+        valids: list[bool] = []
+
+        for frame_index, frame in enumerate(frames):
+            time = frame_index / frames_per_second
+            frame_bits = frame.bits
+            f_idx = getattr(frame, "frame_index", frame_index)
+
+            # Fast-path execution loop
+            if is_trivially_scheduled:
+                if not frame_bits:
+                    for p in self._valid_params:
+                        times.append(time)
+                        param_names.append(p.name)
+                        values.append(None)
+                        frame_indices.append(f_idx)
+                        subframe_indices.append(self._subframes[id(p)])
+                        superframe_indices.append(0)
+                        bit_offsets.append(self._bit_offsets[id(p)])
+                        valids.append(False)
                     continue
 
-                interval_frames = int(round(frames_per_second / p.rate))
-                if interval_frames <= 0:
-                    interval_frames = 1
+                for p in self._valid_params:
+                    try:
+                        decode_func = self._decode_funcs[id(p)]
+                        value, valid = decode_func(
+                            frame_bits, words_per_subframe, word_bits
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("Failed to decode parameter %s: %s", p.name, exc)
+                        value, valid = None, False
+
+                    times.append(time)
+                    param_names.append(p.name)
+                    values.append(value)
+                    frame_indices.append(f_idx)
+                    subframe_indices.append(self._subframes[id(p)])
+                    superframe_indices.append(0)
+                    bit_offsets.append(self._bit_offsets[id(p)])
+                    valids.append(valid)
+                continue
+
+            # Standard scheduled loop
+            for p in self._valid_params:
+                p_id = id(p)
+                interval_frames = interval_frames_map[p_id]
+                sf_count = self._superframe_counts[p_id]
+                sf_target = self._superframes[p_id]
+                sub_idx = self._subframes[p_id]
+                bit_off = self._bit_offsets[p_id]
 
                 # superframe scheduling
-                current_sf = frame_index % p.superframe_group_count
-                if p.superframe is not None and current_sf != p.superframe:
-                    rows.append(
-                        {
-                            "time": time,
-                            "parameter_name": p.name,
-                            "value": None,
-                            "frame_index": frame_index,
-                            "subframe_index": p.subframe,
-                            "superframe_index": current_sf,
-                            "bit_offset": p.bit_offset,
-                            "valid": False,
-                        }
-                    )
+                current_sf = f_idx % sf_count
+                if sf_target is not None and current_sf != sf_target:
+                    times.append(time)
+                    param_names.append(p.name)
+                    values.append(None)
+                    frame_indices.append(f_idx)
+                    subframe_indices.append(sub_idx)
+                    superframe_indices.append(current_sf)
+                    bit_offsets.append(bit_off)
+                    valids.append(False)
                     continue
 
                 # rate scheduling
-                if (frame_index % interval_frames) != 0:
-                    rows.append(
-                        {
-                            "time": time,
-                            "parameter_name": p.name,
-                            "value": None,
-                            "frame_index": frame_index,
-                            "subframe_index": p.subframe,
-                            "superframe_index": current_sf,
-                            "bit_offset": p.bit_offset,
-                            "valid": False,
-                        }
-                    )
+                if (f_idx % interval_frames) != 0:
+                    times.append(time)
+                    param_names.append(p.name)
+                    values.append(None)
+                    frame_indices.append(f_idx)
+                    subframe_indices.append(sub_idx)
+                    superframe_indices.append(current_sf)
+                    bit_offsets.append(bit_off)
+                    valids.append(False)
                     continue
 
-                # decode
-                value, valid = p.decode_from_frame(
-                    frame.bits, words_per_subframe, word_bits
-                )
+                # decode using cached bound function
+                try:
+                    decode_func = self._decode_funcs[p_id]
+                    value, valid = decode_func(
+                        frame_bits, words_per_subframe, word_bits
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to decode ARINC 717 parameter %s: %s", p.name, exc
+                    )
+                    value, valid = None, False
 
-                rows.append(
-                    {
-                        "time": time,
-                        "parameter_name": p.name,
-                        "value": value,
-                        "frame_index": frame_index,
-                        "subframe_index": p.subframe,
-                        "superframe_index": current_sf,
-                        "bit_offset": p.bit_offset,
-                        "valid": valid,
-                    }
-                )
+                times.append(time)
+                param_names.append(p.name)
+                values.append(value)
+                frame_indices.append(f_idx)
+                subframe_indices.append(sub_idx)
+                superframe_indices.append(current_sf)
+                bit_offsets.append(bit_off)
+                valids.append(valid)
 
-        return pd.DataFrame(rows)
+        return pd.DataFrame(
+            {
+                "time": times,
+                "parameter_name": param_names,
+                "value": values,
+                "frame_index": frame_indices,
+                "subframe_index": subframe_indices,
+                "superframe_index": superframe_indices,
+                "bit_offset": bit_offsets,
+                "valid": valids,
+            }
+        )
 
     def decode_frames(self, frames: Iterable[Frame]) -> pd.DataFrame:
         rows: list[dict[str, Any]] = []
@@ -104,14 +224,22 @@ class Arinc717Decoder:
                 "bit_offset": bit_offset,
             }
 
-            # ARINC 717 uses subframe/word/bit_offset
-            for p in self.params:
-                value, valid = p.decode_from_frame(
-                    frame.bits,
-                    frame.words_per_subframe,
-                    frame.word_bits,
-                )
-                row[p.name] = value
+            frame_bits = getattr(frame, "bits", None)
+            w_sub = getattr(frame, "words_per_subframe", None)
+            w_bits = getattr(frame, "word_bits", None)
+
+            for p in self._valid_params:
+                try:
+                    decode_func = self._decode_funcs[id(p)]
+                    value, valid = decode_func(frame_bits, w_sub, w_bits)
+                    row[p.name] = value
+                    row[f"{p.name}_valid"] = valid
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Failed to decode wide frame parameter %s: %s", p.name, exc
+                    )
+                    row[p.name] = None
+                    row[f"{p.name}_valid"] = False
 
             rows.append(row)
 
