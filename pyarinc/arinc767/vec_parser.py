@@ -16,6 +16,18 @@ _VEC_BITRANGE_RE_767 = re.compile(
 )
 
 
+def _read_text_file(path: Path) -> str:
+    """Read text file with automatic encoding fallback."""
+    for encoding in ("utf-8", "latin-1", "cp1252"):
+        try:
+            return path.read_text(encoding=encoding).strip()
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeDecodeError(
+        f"Failed to decode VEC file with standard encodings: {path}"
+    )
+
+
 def _parse_bitrange_767(token: str) -> dict[str, int] | None:
     m = _VEC_BITRANGE_RE_767.search(token)
     if not m:
@@ -35,15 +47,9 @@ def _parse_bitrange_767(token: str) -> dict[str, int] | None:
 
 
 def parse_vec_file_767(path: Path) -> dict[str, Any]:
-    """ARINC 767 VEC parser with improved hex FID and single-pass token parsing."""
+    """Advanced ARINC 767 VEC parser with robust encoding, inline comment stripping, and validation."""
     try:
-        text = path.read_text(encoding="utf-8").strip()
-    except UnicodeDecodeError:
-        try:
-            text = path.read_text(encoding="latin-1").strip()
-        except Exception as e:
-            logger.error(f"Failed to read VEC file 767 {path}: {e}")
-            raise
+        text = _read_text_file(path)
     except Exception as e:
         logger.error(f"Failed to read VEC file 767 {path}: {e}")
         raise
@@ -59,8 +65,9 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
     out: dict[str, Any] = {}
 
     for line_num, line in enumerate(text.splitlines(), start=1):
-        line = line.strip()
-        if not line or line.startswith("#"):
+        # Strip inline comments and whitespace
+        line = line.split("#")[0].strip()
+        if not line:
             continue
 
         parts = line.split()
@@ -81,6 +88,9 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
                 entry.update(br)
                 break
 
+        if "word" not in entry:
+            logger.debug(f"Line {line_num}: No bitrange found for parameter '{name}'")
+
         # Rate extraction fallback (ignoring key-value parameters)
         for tok in reversed(parts):
             if "=" in tok:
@@ -91,10 +101,10 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
             except ValueError:
                 continue
 
-        # Single-pass token processing
+        # Single-pass token processing for metadata flags
         for tok in parts[1:]:
             upper_tok = tok.upper()
-            if upper_tok in ("BNR", "BCD", "CHAR"):
+            if upper_tok in ("BNR", "BCD", "CHAR", "DISCRETE"):
                 entry["type"] = upper_tok
                 continue
 
@@ -111,7 +121,9 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
                     base = 16 if val.lower().startswith("0x") else 10
                     entry["frame_id_767"] = int(val, base)
                 except ValueError:
-                    pass
+                    logger.warning(
+                        f"Line {line_num}: Invalid FID value '{val}' for parameter '{name}'"
+                    )
             elif key == "COB":
                 entry["cob_formula"] = val
             elif key == "TYPE":
