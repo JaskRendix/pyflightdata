@@ -2,6 +2,7 @@ import zipfile
 from pathlib import Path
 
 from pyarinc.arinc767.decoder import Arinc767Decoder
+from pyarinc.arinc767.parser import Arinc767FrameParser
 from pyarinc.arinc767.vec_parser import parse_vec_file_767, vec_to_parameters_767
 from pyarinc.io.csv_export import export_csv
 from pyarinc.io.parquet_export import export_parquet
@@ -22,6 +23,17 @@ def process_flight_767_data(
         raw_bytes = z.read(inner_filename)
 
     print(f"Loaded {len(raw_bytes)} bytes of raw flight data.")
+    print("Analyzing stream health with Arinc767FrameParser.parse_with_stats()...")
+    stats = Arinc767FrameParser.parse_with_stats(raw_bytes)
+    print("--- Stream Health Diagnostics ---")
+    print(f"  Total Bytes Processed : {stats.total_bytes_processed}")
+    print(f"  Valid Frames Found    : {stats.valid_frames_count}")
+    print(
+        f"  Gaps Encountered      : {stats.gaps_encountered} (Total gap bytes: {stats.total_gap_bytes})"
+    )
+    print(f"  Trailer Mismatches    : {stats.trailer_mismatches}")
+    print(f"  Embedded Headers      : {stats.embedded_headers_detected}")
+    print("--------------------------------")
 
     print("Decoding ARINC 767 parameters using Arinc767Decoder...")
     decoder = Arinc767Decoder(list(parameters.values()), frames_per_second=1.0)

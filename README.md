@@ -81,6 +81,12 @@ Tests cover:
 - Parameter extraction using **absolute bit indexing** (`start_bit`)  
 - VEC/PRM/FRED‑based configuration  
 - Raw‑byte convenience decoding via `decode_raw_bytes()`  
+- File-streaming support for multi-gigabyte logs via `iter_frames_from_file()` (chunk-by-chunk processing with memory efficiency)  
+- Diagnostic telemetry reporting via `parse_with_stats()` and `Arinc767ParseResult` (tracking valid counts, gaps, total gap bytes, and trailer mismatches)  
+- Robust stream controls:
+  - `strict` mode parsing (rejecting invalid lengths or trailer mismatches)
+  - `max_gap` threshold enforcement
+  - `max_frames` safety limits  
 - Full data‑type support:
   - BNR (signed/unsigned)
   - BCD

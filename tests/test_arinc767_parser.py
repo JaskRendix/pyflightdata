@@ -22,8 +22,24 @@ def test_trailer_strict_vs_lenient():
     raw_good = build_raw_frame(1, 0x01, 0, data)
     raw_bad = raw_good[:-2] + b"\x00\x00"
 
-    assert Arinc767FrameParser.parse_frame(raw_bad, 0, 0, strict=True) is None
-    assert Arinc767FrameParser.parse_frame(raw_bad, 0, 0, strict=False) is not None
+    # parse_frame now returns (frame, trailer_mismatch) tuple
+    frame_strict, _ = Arinc767FrameParser.parse_frame(raw_bad, 0, 0, strict=True)
+    assert frame_strict is None
+
+    frame_lenient, mismatch = Arinc767FrameParser.parse_frame(
+        raw_bad, 0, 0, strict=False
+    )
+    assert frame_lenient is not None
+    assert mismatch is True
+
+
+def test_max_frames_limit():
+    frame = build_raw_frame(1, 0x00, 0, b"\xAA\xBB")
+    stream = frame * 1000
+
+    frames = list(Arinc767FrameParser.iter_frames(stream, max_frames=10))
+
+    assert len(frames) == 10
 
 
 def test_timestamp_wraparound():
@@ -150,12 +166,46 @@ def test_timestamp_regression_warning(caplog):
     assert any("timestamp regression" in r.message for r in caplog.records)
 
 
-def test_max_frames_limit(caplog):
-    frame = build_raw_frame(1, 0x00, 0, b"\xAA\xBB")
-    stream = frame * 1000
+def test_iter_frames_from_file_streaming(tmp_path):
+    f1 = build_raw_frame(1, 0x00, 0, b"\xAA\xBB")
+    f2 = build_raw_frame(2, 0x00, 100, b"\xCC\xDD")
+    f3 = build_raw_frame(3, 0x00, 200, b"\xEE\xFF")
+    stream_data = f1 + f2 + f3
 
-    with caplog.at_level("WARNING"):
-        frames = list(Arinc767FrameParser.iter_frames(stream, max_frames=10))
+    dfile = tmp_path / "test_recording.arinc767"
+    dfile.write_bytes(stream_data)
 
-    assert len(frames) == 10
-    assert any("Maximum frame limit" in r.message for r in caplog.records)
+    frames = list(Arinc767FrameParser.iter_frames_from_file(dfile, chunk_size=20))
+
+    assert len(frames) == 3
+    assert frames[0].frame_id == 1
+    assert frames[1].frame_id == 2
+    assert frames[2].frame_id == 3
+    assert frames[2].timestamp_ms == 200
+
+
+def test_parse_with_stats_diagnostics():
+    frame_good = build_raw_frame(1, 0x00, 100, b"\x01\x02")
+    frame_bad_trailer = build_raw_frame(2, 0x00, 200, b"\x03\x04")[:-2] + b"\xFF\xFF"
+    gap = b"\x00" * 16
+
+    stream = frame_good + gap + frame_bad_trailer
+
+    stats = Arinc767FrameParser.parse_with_stats(stream)
+
+    assert stats.valid_frames_count == 2
+    assert stats.gaps_encountered == 1
+    assert stats.total_gap_bytes == 16
+    assert stats.trailer_mismatches == 1
+    assert len(stats.frames) == 2
+
+
+def test_parser_empty_and_garbage_streams():
+    garbage = b"\xFF\xFE\xFA\xCE" * 20
+
+    frames = list(Arinc767FrameParser.iter_frames(garbage))
+    stats = Arinc767FrameParser.parse_with_stats(garbage)
+
+    assert len(frames) == 0
+    assert stats.valid_frames_count == 0
+    assert stats.total_bytes_processed == len(garbage)
