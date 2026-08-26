@@ -38,6 +38,12 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
     """ARINC 767 VEC parser with improved hex FID and single-pass token parsing."""
     try:
         text = path.read_text(encoding="utf-8").strip()
+    except UnicodeDecodeError:
+        try:
+            text = path.read_text(encoding="latin-1").strip()
+        except Exception as e:
+            logger.error(f"Failed to read VEC file 767 {path}: {e}")
+            raise
     except Exception as e:
         logger.error(f"Failed to read VEC file 767 {path}: {e}")
         raise
