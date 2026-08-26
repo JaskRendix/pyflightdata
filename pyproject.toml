@@ -22,10 +22,14 @@ test = [
 io = [
     "pyarrow",
 ]
+viz = [
+    "matplotlib",
+]
 dev = [
     "pytest",
     "pytest-cov",
     "pyarrow",
+    "matplotlib",
 ]
 
 [build-system]
