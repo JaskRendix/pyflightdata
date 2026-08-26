@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 import logging
 import zipfile
 from pathlib import Path
 
 from pyarinc.arinc717.decoder import Arinc717Decoder
+from pyarinc.arinc717.prm_parser import parse_prm_file, prm_to_parameters
 from pyarinc.config.fred_parser import FredXmlParser, StrictMode
 from pyarinc.io.csv_export import export_csv
 from pyarinc.io.datafile import read_binary
 from pyarinc.io.parquet_export import export_parquet
 from pyarinc.models.parameter import Parameter
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def process_zip_archive(zip_path: Path, output_dir: Path) -> None:
-    """Extract, dynamically parse configuration, and decode ARINC 717 data inside a ZIP archive."""
+    """Extract, dynamically parse configuration (XML or PRM/JSON), and decode ARINC 717 data inside a ZIP archive."""
     print(f"\nProcessing archive: {zip_path.name}")
 
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -27,7 +29,7 @@ def process_zip_archive(zip_path: Path, output_dir: Path) -> None:
         extract_dir = output_dir / "extracted" / zip_path.stem
         extract_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract all contents so configuration and raw.dat are accessible together
+        # Extract all contents so configuration files and raw.dat are accessible together
         zf.extractall(extract_dir)
 
         # 1. Locate raw.dat for binary flight data
@@ -38,14 +40,14 @@ def process_zip_archive(zip_path: Path, output_dir: Path) -> None:
             )
             return
 
-        # 2. Try loading configuration XML file if available
-        xml_files = list(extract_dir.glob("*.xml"))
         parameters = []
 
+        # 2. Try loading configuration XML file if available
+        xml_files = list(extract_dir.glob("*.xml"))
         if xml_files:
             target_xml = xml_files[0]
             print(
-                f"-> Found configuration file: {target_xml.name}. Parsing parameters..."
+                f"-> Found XML configuration file: {target_xml.name}. Parsing parameters..."
             )
             try:
                 fred_doc = FredXmlParser.parse_file(
@@ -58,14 +60,31 @@ def process_zip_archive(zip_path: Path, output_dir: Path) -> None:
                 ]
                 if parameters:
                     print(
-                        f"   Successfully loaded {len(parameters)} parameters from configuration."
+                        f"   Successfully loaded {len(parameters)} parameters from XML configuration."
                     )
-                else:
-                    print(f"   XML file is metadata-only (0 parameters found).")
             except Exception as e:
                 print(f"   Warning: Failed to parse XML configuration ({e}).")
 
-        # 3. Fallback to an expanded list of common flight parameters if XML didn't provide any
+        # 3. Try loading PRM or JSON configuration files if no XML parameters were found
+        if not parameters:
+            prm_files = list(extract_dir.glob("*.prm")) + list(extract_dir.glob("*.json"))
+            if prm_files:
+                target_prm = prm_files[0]
+                print(
+                    f"-> Found PRM/JSON configuration file: {target_prm.name}. Parsing mapping..."
+                )
+                try:
+                    prm_mapping = parse_prm_file(target_prm)
+                    param_dict = prm_to_parameters(prm_mapping)
+                    parameters = list(param_dict.values())
+                    if parameters:
+                        print(
+                            f"   Successfully loaded {len(parameters)} parameters from PRM configuration."
+                        )
+                except Exception as e:
+                    print(f"   Warning: Failed to parse PRM configuration ({e}).")
+
+        # 4. Fallback to default hardcoded flight parameters if no config files found
         if not parameters:
             print("-> Using expanded default flight parameters mapping (Fallback).")
             parameters = [
@@ -119,7 +138,7 @@ def process_zip_archive(zip_path: Path, output_dir: Path) -> None:
                 ),
             ]
 
-        # 4. Decode binary stream using parameters
+        # 5. Decode binary stream using parameters
         print(f"-> Decoding raw.dat...")
         try:
             raw_bytes = read_binary(raw_dat_path)
