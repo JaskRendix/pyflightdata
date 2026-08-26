@@ -3,7 +3,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from pyarinc.config.fred_parser import FredXmlParser, StrictMode
+from pyarinc.arinc647a.fred_parser import FredXmlParser, StrictMode
 
 # Configure logging to see parser warnings and debug details
 logging.basicConfig(

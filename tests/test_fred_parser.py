@@ -1,14 +1,8 @@
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 
-from pyarinc.config.fred_parser import (
-    FredDocument,
-    FredParameter,
-    FredXmlParser,
-    StrictMode,
-)
+from pyarinc.arinc647a.fred_parser import FredXmlParser, StrictMode
 
 
 def write_temp_xml(tmp_path, xml: str) -> Path:

@@ -4,9 +4,9 @@ import logging
 import zipfile
 from pathlib import Path
 
+from pyarinc.arinc647a.fred_parser import FredXmlParser, StrictMode
 from pyarinc.arinc717.decoder import Arinc717Decoder
 from pyarinc.arinc717.prm_parser import parse_prm_file, prm_to_parameters
-from pyarinc.config.fred_parser import FredXmlParser, StrictMode
 from pyarinc.io.csv_export import export_csv
 from pyarinc.io.datafile import read_binary
 from pyarinc.io.parquet_export import export_parquet
@@ -67,7 +67,9 @@ def process_zip_archive(zip_path: Path, output_dir: Path) -> None:
 
         # 3. Try loading PRM or JSON configuration files if no XML parameters were found
         if not parameters:
-            prm_files = list(extract_dir.glob("*.prm")) + list(extract_dir.glob("*.json"))
+            prm_files = list(extract_dir.glob("*.prm")) + list(
+                extract_dir.glob("*.json")
+            )
             if prm_files:
                 target_prm = prm_files[0]
                 print(
