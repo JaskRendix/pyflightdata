@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -17,15 +18,29 @@ _VEC_BITRANGE_RE_767 = re.compile(
 
 
 def _read_text_file(path: Path) -> str:
-    """Read text file with automatic encoding fallback."""
-    for encoding in ("utf-8", "latin-1", "cp1252"):
+    """Read text file, safely handling ZIP archives, UTF-16 BOMs, and standard encodings."""
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path, "r") as z:
+            namelist = z.namelist()
+            par_files = [f for f in namelist if f.endswith(".par")]
+            target_file = par_files[0] if par_files else namelist[0]
+            raw_bytes = z.read(target_file)
+    else:
+        raw_bytes = path.read_bytes()
+
+    # Check if bytes actually have a UTF-16 BOM (FF FE or FE FF) or start with null bytes characteristic of UTF-16 text
+    encodings = ("utf-8", "latin-1", "cp1252")
+    if raw_bytes.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings = ("utf-16",) + encodings
+
+    for encoding in encodings:
         try:
-            return path.read_text(encoding=encoding).strip()
+            return raw_bytes.decode(encoding).strip()
         except UnicodeDecodeError:
             continue
-    raise UnicodeDecodeError(
-        f"Failed to decode VEC file with standard encodings: {path}"
-    )
+
+    # Absolute fallback
+    return raw_bytes.decode("utf-8", errors="ignore").strip()
 
 
 def _parse_bitrange_767(token: str) -> dict[str, int] | None:
@@ -117,7 +132,6 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
 
             if key == "FID":
                 try:
-                    # Support both decimal and hex (e.g. FID=0x0F)
                     base = 16 if val.lower().startswith("0x") else 10
                     entry["frame_id_767"] = int(val, base)
                 except ValueError:

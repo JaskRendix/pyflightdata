@@ -12,7 +12,7 @@ from pyarinc.models.parameter import Parameter
 def test_vec_767_parsing(tmp_path: Path):
     text = "MACH W0B0-8 1.0 FID=3 COB=raw*0.00390625"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     assert "MACH" in mapping
@@ -137,7 +137,7 @@ def test_vec_parser_767_tokens_and_hex_fid(tmp_path: Path) -> None:
     """
 
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
 
@@ -181,7 +181,7 @@ def test_vec_parser_767_tokens_and_hex_fid(tmp_path: Path) -> None:
 def test_vec_767_type_token(tmp_path: Path):
     text = "ALT W0B0-7 TYPE=BNR 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     assert mapping["ALT"]["type"] == "BNR"
@@ -193,7 +193,7 @@ def test_vec_767_type_token(tmp_path: Path):
 def test_vec_767_signed_token(tmp_path: Path):
     text = "ALT W0B0-7 TYPE=BNR SIGNED=true 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     assert mapping["ALT"]["signed"] is True
@@ -205,7 +205,7 @@ def test_vec_767_signed_token(tmp_path: Path):
 def test_vec_767_scale_offset(tmp_path: Path):
     text = "ALT W0B0-7 TYPE=BNR SCALE=0.01 OFFSET=100 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     assert mapping["ALT"]["scale"] == 0.01
@@ -219,7 +219,7 @@ def test_vec_767_scale_offset(tmp_path: Path):
 def test_vec_767_hex_fid_parsed(tmp_path: Path):
     text = "ALT W0B0-7 TYPE=BNR FID=0x03 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     assert mapping["ALT"].get("frame_id_767") == 3
@@ -231,7 +231,7 @@ def test_vec_767_hex_fid_parsed(tmp_path: Path):
 def test_vec_767_no_unsupported_kwargs(tmp_path: Path):
     text = "ALT W0B0-7 TYPE=BNR SIGNED=true SCALE=2 OFFSET=3 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     params = vec_to_parameters_767(mapping)
@@ -250,7 +250,7 @@ def test_vec_767_no_unsupported_kwargs(tmp_path: Path):
 def test_vec_767_char_token(tmp_path: Path):
     text = "STR W2B0-7 CHAR 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     assert mapping["STR"]["type"] == "CHAR"
@@ -262,7 +262,7 @@ def test_vec_767_char_token(tmp_path: Path):
 def test_vec_767_bcd_token(tmp_path: Path):
     text = "NUM W3B0-11 BCD 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     assert mapping["NUM"]["type"] == "BCD"
@@ -274,7 +274,7 @@ def test_vec_767_bcd_token(tmp_path: Path):
 def test_vec_767_cob_formula_with_scale_offset(tmp_path: Path):
     text = "MACH W0B0-15 COB=raw*scale+offset SCALE=2 OFFSET=3 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     params = vec_to_parameters_767(mapping)
@@ -288,7 +288,7 @@ def test_vec_767_cob_formula_with_scale_offset(tmp_path: Path):
 def test_vec_767_invalid_hex_fid(tmp_path: Path):
     text = "ALT W0B0-7 FID=0xINVALID 1.0"
     p = tmp_path / "test.vec"
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
 
     mapping = parse_vec_file_767(p)
     # Should safely default or ignore instead of raising ValueError
