@@ -10,14 +10,14 @@ from ..models.parameter import Parameter
 
 logger = logging.getLogger(__name__)
 
-_VEC_BITRANGE_RE_717 = re.compile(
+_VEC_BITRANGE_RE = re.compile(
     r"W\s*(?P<word>\d+)\s*B\s*(?P<bstart>\d+)(?:-(?P<bend>\d+))?",
     re.IGNORECASE,
 )
 
 
 def _parse_bitrange_717(token: str) -> dict[str, int] | None:
-    m = _VEC_BITRANGE_RE_717.search(token)
+    m = _VEC_BITRANGE_RE.search(token)
     if not m:
         return None
     word = int(m.group("word"))
@@ -69,8 +69,10 @@ def parse_vec_file_717(path: Path) -> dict[str, Any]:
                 entry.update(br)
                 break
 
-        # Rate extraction (fallback to scanning for float tokens)
+        # Rate extraction (fallback to scanning for float tokens safely)
         for tok in reversed(parts):
+            if "=" in tok:
+                continue
             try:
                 entry["rate"] = float(tok)
                 break
@@ -172,14 +174,8 @@ def vec_to_parameters_717(
     return out
 
 
-_VEC_BITRANGE_RE_767 = re.compile(
-    r"W\s*(?P<word>\d+)\s*B\s*(?P<bstart>\d+)(?:-(?P<bend>\d+))?",
-    re.IGNORECASE,
-)
-
-
 def _parse_bitrange_767(token: str) -> dict[str, int] | None:
-    m = _VEC_BITRANGE_RE_767.search(token)
+    m = _VEC_BITRANGE_RE.search(token)
     if not m:
         return None
 
@@ -237,8 +233,10 @@ def parse_vec_file_767(path: Path) -> dict[str, Any]:
                 entry.update(br)
                 break
 
-        # Rate extraction fallback
+        # Rate extraction fallback (ignoring key-value parameters)
         for tok in reversed(parts):
+            if "=" in tok:
+                continue
             try:
                 entry["rate"] = float(tok)
                 break

@@ -144,3 +144,42 @@ def test_vec_717_default_type(tmp_path: Path):
     params = vec_to_parameters_717(mapping)
 
     assert params["ALT"].data_type == "DISCRETE"
+
+
+def test_vec_717_scientific_and_negatives(tmp_path: Path):
+    text = "ALT W1B0-7 TYPE=BNR SCALE=-1.5e-2 OFFSET=-100.5 4.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_717(p)
+    assert mapping["ALT"]["scale"] == -0.015
+    assert mapping["ALT"]["offset"] == -100.5
+
+
+def test_vec_717_comments_and_blank_lines(tmp_path: Path):
+    text = """
+    # This is a comment header
+    
+    ALT W1B0-7 BNR 4.0
+    
+    # Another comment inline-style if supported, or blank lines
+    SPD W2B0-7 BCD 2.0
+    """
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_717(p)
+    assert len(mapping) == 2
+    assert "ALT" in mapping
+    assert "SPD" in mapping
+
+
+def test_vec_717_invalid_numeric_fallbacks(tmp_path: Path):
+    text = "ALT W1B0-7 SCALE=not_a_number OFFSET=also_bad 4.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    # Should not crash; should safely ignore invalid conversions
+    mapping = parse_vec_file_717(p)
+    assert "scale" not in mapping["ALT"]
+    assert "offset" not in mapping["ALT"]

@@ -283,3 +283,33 @@ def test_vec_767_cob_formula_with_scale_offset(tmp_path: Path):
     data = bytes([0x00, 0x10])  # raw = 16
 
     assert p_mach.decode_raw_from_bytes(data) == 16
+
+
+def test_vec_767_invalid_hex_fid(tmp_path: Path):
+    text = "ALT W0B0-7 FID=0xINVALID 1.0"
+    p = tmp_path / "test.vec"
+    p.write_text(text)
+
+    mapping = parse_vec_file_767(p)
+    # Should safely default or ignore instead of raising ValueError
+    assert mapping["ALT"].get("frame_id_767") is None
+
+
+def test_arinc767_decoder_frame_id_mismatch():
+    # Frame has ID 2, but parameter expects ID 5
+    raw = bytes.fromhex("EB90" "000E" "00000000" "00" "05" "1234" "0001")
+    frame = Arinc767Frame(raw, 0, frame_id=2, frame_type=0, timestamp_ms=0)
+
+    p = Parameter(
+        name="X",
+        start_bit=0,
+        bit_length=16,
+        data_type="DISCRETE",
+        frame_id_767=5,  # Mismatch!
+    )
+
+    dec = Arinc767Decoder([p])
+    df = dec.decode_frames([frame])
+
+    # Since the frame_id doesn't match, parameter 'X' is not decoded for this frame
+    assert "X" not in df.columns
