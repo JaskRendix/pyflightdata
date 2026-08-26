@@ -5,7 +5,7 @@ from pathlib import Path
 from pyarinc.arinc767.decoder import Arinc767Decoder
 from pyarinc.arinc767.frame import Arinc767Frame
 from pyarinc.arinc767.parser import Arinc767FrameParser
-from pyarinc.config.vec_parser import parse_vec_file_767, vec_to_parameters_767
+from pyarinc.arinc767.vec_parser import parse_vec_file_767, vec_to_parameters_767
 from pyarinc.models.parameter import Parameter
 
 
