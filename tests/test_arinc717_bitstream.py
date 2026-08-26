@@ -1,3 +1,5 @@
+import pytest
+
 from pyarinc.arinc717.aligned import AlignedStream
 from pyarinc.arinc717.bitstream import BitstreamScanner
 
@@ -66,3 +68,66 @@ def test_missing_frame_insertion():
     frames = list(aligned.iter_frames())
     # we expect two frames extracted sequentially
     assert len(frames) >= 2
+
+
+@pytest.mark.parametrize(
+    "sync_pat, sync_len, bitstream, expected_pos",
+    [
+        (0b11, 2, "001100", 2),  # Simple short sync pattern
+        (
+            0x257,
+            12,
+            "000000000000" + "001001010111" + "1111",
+            12,
+        ),  # Standard 717 pattern
+        (0xF, 4, "1111", 0),  # Sync at the very beginning
+        (0xF, 4, "000000001111", 8),  # Sync at the very end
+    ],
+)
+def test_bitstream_scanner_parametrized(sync_pat, sync_len, bitstream, expected_pos):
+    data = bits_to_bytes(bitstream)
+    scanner = BitstreamScanner(sync_pat, sync_len)
+    positions = scanner.find_sync_positions(data)
+    assert positions
+    assert expected_pos in positions
+
+
+def test_bitstream_scanner_edge_cases():
+    # Sync length longer than data
+    scanner = BitstreamScanner(0b1010, 16)
+    assert scanner.find_sync_positions(b"\x0A") == []
+
+    # Zero or negative sync length
+    scanner_zero = BitstreamScanner(0b1010, 0)
+    assert scanner_zero.find_sync_positions(b"\x0A\x0B") == []
+
+    # Empty data
+    scanner_empty = BitstreamScanner(0b10, 2)
+    assert scanner_empty.find_sync_positions(b"") == []
+
+
+def test_aligned_stream_truncated_tail():
+    # Setup data where a full frame requires 4 bytes total, but we leave only 2 bytes at the end
+    sync = 0b11110000
+    sync_len = 8
+    # Frame size configuration: 2 subframes * 1 word per subframe * 8 bits = 2 bytes per frame (+ sync)
+    # Let's make frame size 4 bytes by setting words_per_subframe=2, subframes_per_frame=2
+    # Total frame size = 2 * 2 * 8 bits = 32 bits = 4 bytes.
+    frame1 = bytes([0xAA, 0xBB, 0xCC, 0xDD])  # Full 4-byte frame
+    truncated_tail = bytes([0x11, 0x22])  # Only 2 bytes left (incomplete frame)
+
+    data = bytes([sync]) + frame1 + truncated_tail
+
+    aligned = AlignedStream.from_bitstream(
+        data,
+        sync_pattern=sync,
+        sync_length=sync_len,
+        word_bits=8,
+        words_per_subframe=2,
+        subframes_per_frame=2,  # Requires 4 bytes per frame
+    )
+    frames = list(aligned.iter_frames())
+
+    # Should safely drop the truncated 2-byte tail and only return the 1 valid frame
+    assert len(frames) == 1
+    assert frames[0].frame_index == 0

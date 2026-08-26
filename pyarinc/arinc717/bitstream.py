@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -19,33 +18,33 @@ class BitstreamScanner:
         self.sync_length = sync_length
 
     def find_sync_positions(self, data: bytes) -> list[int]:
-        """Return list of bit offsets where the sync pattern occurs.
-
-        This is a deterministic, exact-match scanner. It can be extended to
-        handle fuzzy matches or bit slips.
-        """
-        bits = list(self._bits_from_bytes(data))
+        """Return list of bit offsets where the sync pattern occurs using direct byte windowing."""
         positions: list[int] = []
-        total = len(bits)
-        if self.sync_length <= 0 or self.sync_length > total:
+        total_bits = len(data) * 8
+        if self.sync_length <= 0 or self.sync_length > total_bits:
             return positions
-        # build integer window
+
         mask = (1 << self.sync_length) - 1
         window = 0
-        # preload first sync_length-1 bits
-        for i in range(self.sync_length - 1):
-            window = (window << 1) | bits[i]
-        for i in range(self.sync_length - 1, total):
-            window = ((window << 1) & mask) | bits[i]
-            # compute pattern as integer
+
+        # Preload the sliding window bit by bit
+        for bit_idx in range(self.sync_length - 1):
+            byte_pos = bit_idx >> 3
+            bit_shift = 7 - (bit_idx & 7)
+            bit = (data[byte_pos] >> bit_shift) & 1
+            window = (window << 1) | bit
+
+        # Scan through the rest of the stream
+        for bit_idx in range(self.sync_length - 1, total_bits):
+            byte_pos = bit_idx >> 3
+            bit_shift = 7 - (bit_idx & 7)
+            bit = (data[byte_pos] >> bit_shift) & 1
+
+            window = ((window << 1) & mask) | bit
+
             if window == self.sync_pattern:
-                pos = i - (self.sync_length - 1)
+                pos = bit_idx - (self.sync_length - 1)
                 positions.append(pos)
+
         logger.debug("Found %d sync positions", len(positions))
         return positions
-
-    @staticmethod
-    def _bits_from_bytes(data: bytes) -> Iterable[int]:
-        for b in data:
-            for i in range(7, -1, -1):
-                yield (b >> i) & 1
