@@ -23,7 +23,7 @@ def parse_prm_file(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8").strip()
     except Exception as e:
-        logger.error(f"Failed to read PRM file {path}: {e}")
+        logger.exception(f"Failed to read PRM file {path}: {e}")
         raise
 
     # Try parsing as JSON first
@@ -78,7 +78,7 @@ def parse_prm_file(path: Path) -> dict[str, Any]:
                 "superframe": superframe,
             }
 
-            # Parse optional trailing key-value tokens (e.g., TYPE=BNR SCALE=0.1)
+            # Parse optional trailing key-value tokens (e.g., TYPE=BNR SCALE=0.1 SIGNED=True)
             line_has_error = False
             for part in parts[start_idx:]:
                 if "=" in part:
@@ -88,6 +88,8 @@ def parse_prm_file(path: Path) -> dict[str, Any]:
 
                     if key == "type":
                         param_meta["type"] = val
+                    elif key == "signed":
+                        param_meta["signed"] = val.lower() in ("true", "1", "yes", "on")
                     elif key == "scale":
                         try:
                             param_meta["scale"] = float(val)
@@ -130,10 +132,11 @@ def prm_to_parameters(mapping: dict[str, Any]) -> dict[str, Parameter]:
         bit_offset = int(md.get("bit_offset", 0))
         length = int(md.get("length", 8))
         rate = float(md.get("rate", 1.0))
-        superframe = md.get("superframe")
+        superframe = int(md["superframe"]) if md.get("superframe") is not None else None
         scale = md.get("scale")
         offset = md.get("offset")
         dtype = md.get("type", "DISCRETE")
+        signed = md.get("signed")
 
         p = Parameter.from_717(
             name=name,
@@ -150,6 +153,8 @@ def prm_to_parameters(mapping: dict[str, Any]) -> dict[str, Parameter]:
             p.scale = float(scale)
         if offset is not None:
             p.offset = float(offset)
+        if signed is not None and hasattr(p, "signed"):
+            p.signed = bool(signed)
 
         out[name] = p
 
